@@ -1,0 +1,85 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+
+# Virtual Environment
+backend/venv/
+venv/
+.env
+
+# ==========================
+# Node.js
+# ==========================
+frontend/node_modules/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build Output
+frontend/dist/
+dist/
+
+# ==========================
+# VS Code
+# ==========================
+.vscode/
+
+# ==========================
+# OS Files
+# ==========================
+.DS_Store
+Thumbs.db
+
+# ==========================
+# Docker
+# ==========================
+docker-data/
+*.log
+
+# ==========================
+# AI Models
+# ==========================
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# ==========================
+# Dataset
+# ==========================
+storage/datasets/
+storage/uploads/
+storage/exports/
+storage/temp/
+
+# Keep folder structure
+!storage/.gitkeep
+
+# ==========================
+# Training Outputs
+# ==========================
+runs/
+checkpoints/
+logs/
+tensorboard/
+
+# ==========================
+# Database Backup
+# ==========================
+*.sql
+*.db
+*.sqlite
+*.sqlite3
+
+# ==========================
+# Cache
+# ==========================
+.cache/
