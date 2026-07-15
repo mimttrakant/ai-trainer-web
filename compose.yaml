@@ -43,6 +43,15 @@ services:
       - frontend_node_modules:/app/node_modules
     command: npm run dev -- --host 0.0.0.0
 
+  adminer:
+    image: adminer:latest
+    container_name: ai_trainer_adminer
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+
 volumes:
   postgres_data:
   frontend_node_modules:
