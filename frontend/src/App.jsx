@@ -16,11 +16,12 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/datasets" element={<DatasetPage />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />
-        <Route path="/projects/:id/dataset" element={<DatasetPage />} />
         <Route path="/projects/:id/builder" element={<BuilderPage />} />
         <Route path="/projects/:id/training" element={<TrainingPage />} />
+        <Route path="/projects/:id/dataset" element={<DatasetPage />} />
       </Routes>
     </BrowserRouter>
   );

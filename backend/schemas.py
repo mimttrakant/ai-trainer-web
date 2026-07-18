@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 
 class UserRegister(BaseModel):
@@ -8,7 +8,6 @@ class UserRegister(BaseModel):
 
 
 class UserLogin(BaseModel):
-    # รองรับการ Login ได้ทั้ง Username และ Email
     identifier: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=72)
 
@@ -21,3 +20,10 @@ class ProjectCreate(BaseModel):
 
 class ArchitectureUpdate(BaseModel):
     architecture_json: str
+
+
+class DatasetUrlCreate(BaseModel):
+    owner_id: int
+    name: str = Field(min_length=1, max_length=150)
+    description: str = Field(default="", max_length=1000)
+    source_url: HttpUrl

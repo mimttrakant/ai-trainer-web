@@ -1,0 +1,5 @@
+System: PostgreSQL
+Server: db
+Username: postgres
+Password: postgres
+Database: ai_trainer
