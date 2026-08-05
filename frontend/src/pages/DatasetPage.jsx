@@ -275,10 +275,8 @@ function DatasetCard({ dataset, onDelete }) {
       </div>
       <div><h3 style={datasetNameStyle}>{dataset.name}</h3><p style={datasetDescriptionStyle}>{dataset.description || "No description provided."}</p></div>
       <div style={metadataGridStyle}>
-        <MetadataItem label="Source" value={dataset.source_type === "url" ? "URL / Drive" : "ZIP upload"} />
         <MetadataItem label="Size" value={formatBytes(dataset.size_bytes)} />
         <MetadataItem label="Created" value={formatDate(dataset.created_at)} />
-        <MetadataItem label="File" value={dataset.original_filename || "Remote source"} />
       </div>
       {dataset.status === "failed" && dataset.error_message && <div style={errorBoxStyle}>{dataset.error_message}</div>}
       <button type="button" onClick={onDelete} style={deleteButtonStyle}>Delete</button>

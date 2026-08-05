@@ -9,3 +9,8 @@ pydantic[email]
 python-multipart
 httpx
 gdown
+torch
+torchvision
+Pillow
+onnx
+onnxruntime

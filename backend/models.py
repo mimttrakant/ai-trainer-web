@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    Text,
+)
 from database import Base
 
 
@@ -51,6 +60,88 @@ class Dataset(Base):
     supported = Column(Boolean, default=False)
     unsupported_reason = Column(Text, nullable=True)
     split_type = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class TrainingJob(Base):
+    __tablename__ = "training_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    owner_id = Column(Integer, nullable=False, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    dataset_id = Column(Integer, nullable=False, index=True)
+
+    # new / continue / finetune
+    mode = Column(String, default="new")
+
+    # ใช้เมื่อ Train ต่อจาก Weight เดิม
+    source_model_version_id = Column(Integer, nullable=True)
+
+    # queued / training / completed / failed
+    status = Column(String, default="queued")
+
+    current_epoch = Column(Integer, default=0)
+    total_epochs = Column(Integer, default=10)
+
+    train_loss = Column(Float, nullable=True)
+    val_loss = Column(Float, nullable=True)
+    train_accuracy = Column(Float, nullable=True)
+    val_accuracy = Column(Float, nullable=True)
+
+    learning_rate = Column(Float, default=0.001)
+    batch_size = Column(Integer, default=32)
+    optimizer = Column(String, default="adam")
+
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    finished_at = Column(DateTime, nullable=True)
+
+
+class ModelVersion(Base):
+    __tablename__ = "model_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    owner_id = Column(Integer, nullable=False, index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    dataset_id = Column(Integer, nullable=False, index=True)
+    training_job_id = Column(Integer, nullable=False, index=True)
+
+    name = Column(String, nullable=False)
+    description = Column(Text, default="")
+    version = Column(Integer, default=1)
+
+    pt_path = Column(Text, nullable=True)
+    checkpoint_path = Column(Text, nullable=True)
+    onnx_path = Column(Text, nullable=True)
+
+    architecture_json = Column(Text, default="{}")
+    class_names_json = Column(Text, default="[]")
+    class_count = Column(Integer, default=0)
+
+    best_accuracy = Column(Float, nullable=True)
+    best_loss = Column(Float, nullable=True)
+    epoch = Column(Integer, default=0)
+
+    # private / public
+    visibility = Column(String, default="private")
+
+    allow_download = Column(Boolean, default=True)
+    download_count = Column(Integer, default=0)
+    use_count = Column(Integer, default=0)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(

@@ -17,11 +17,19 @@ from dataset_service import (
     remove_dataset_folder,
     safe_extract_zip,
 )
-from models import Base, Dataset, Project, User
+from models import (
+    Base,
+    Dataset,
+    ModelVersion,
+    Project,
+    TrainingJob,
+    User,
+)
 from schemas import (
     ArchitectureUpdate,
     DatasetUrlCreate,
     ProjectCreate,
+    TrainingJobCreate,
     UserLogin,
     UserRegister,
 )
@@ -104,6 +112,48 @@ def serialize_dataset(dataset: Dataset) -> dict:
         "updated_at": (
             dataset.updated_at.isoformat()
             if dataset.updated_at
+            else None
+        ),
+    }
+
+
+def serialize_training_job(training_job: TrainingJob) -> dict:
+    return {
+        "id": training_job.id,
+        "owner_id": training_job.owner_id,
+        "project_id": training_job.project_id,
+        "dataset_id": training_job.dataset_id,
+        "mode": training_job.mode,
+        "source_model_version_id": training_job.source_model_version_id,
+        "status": training_job.status,
+
+        "current_epoch": training_job.current_epoch or 0,
+        "total_epochs": training_job.total_epochs or 0,
+
+        "train_loss": training_job.train_loss,
+        "val_loss": training_job.val_loss,
+        "train_accuracy": training_job.train_accuracy,
+        "val_accuracy": training_job.val_accuracy,
+
+        "learning_rate": training_job.learning_rate,
+        "batch_size": training_job.batch_size,
+        "optimizer": training_job.optimizer,
+
+        "error_message": training_job.error_message,
+
+        "created_at": (
+            training_job.created_at.isoformat()
+            if training_job.created_at
+            else None
+        ),
+        "updated_at": (
+            training_job.updated_at.isoformat()
+            if training_job.updated_at
+            else None
+        ),
+        "finished_at": (
+            training_job.finished_at.isoformat()
+            if training_job.finished_at
             else None
         ),
     }
@@ -557,6 +607,193 @@ def delete_dataset(
     return {
         "success": True,
         "message": "Dataset and files deleted",
+    }
+
+
+@app.post("/training/jobs")
+def create_training_job(
+    job: TrainingJobCreate,
+    db: Session = Depends(get_db),
+):
+    # 1. ตรวจสอบว่าผู้ใช้มีอยู่จริง
+    owner = (
+        db.query(User)
+        .filter(User.id == job.owner_id)
+        .first()
+    )
+
+    if not owner:
+        return {
+            "success": False,
+            "message": "User not found",
+        }
+
+    # 2. ตรวจสอบว่า Project มีอยู่และเป็นของผู้ใช้นี้
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == job.project_id,
+            Project.owner_id == job.owner_id,
+        )
+        .first()
+    )
+
+    if not project:
+        return {
+            "success": False,
+            "message": "Project not found or access denied",
+        }
+
+    # 3. ตรวจสอบว่า Dataset มีอยู่และเป็นของผู้ใช้นี้
+    dataset = (
+        db.query(Dataset)
+        .filter(
+            Dataset.id == job.dataset_id,
+            Dataset.owner_id == job.owner_id,
+        )
+        .first()
+    )
+
+    if not dataset:
+        return {
+            "success": False,
+            "message": "Dataset not found or access denied",
+        }
+
+    # 4. Dataset ต้องผ่าน Scanner และรองรับการ Train
+    if not dataset.supported:
+        return {
+            "success": False,
+            "message": (
+                dataset.unsupported_reason
+                or "This dataset is not supported for training"
+            ),
+        }
+
+    # 5. Project ต้องมี Architecture ที่บันทึกไว้
+    if not project.architecture_json or project.architecture_json == "{}":
+        return {
+            "success": False,
+            "message": "Please save the model architecture before training",
+        }
+
+    # 6. ตรวจสอบค่าที่ผู้ใช้กรอก
+    if job.total_epochs < 1:
+        return {
+            "success": False,
+            "message": "Total epochs must be at least 1",
+        }
+
+    if job.batch_size < 1:
+        return {
+            "success": False,
+            "message": "Batch size must be at least 1",
+        }
+
+    if job.learning_rate <= 0:
+        return {
+            "success": False,
+            "message": "Learning rate must be greater than 0",
+        }
+
+    allowed_modes = {"new", "continue", "finetune"}
+
+    if job.mode not in allowed_modes:
+        return {
+            "success": False,
+            "message": "Mode must be new, continue, or finetune",
+        }
+
+    allowed_optimizers = {"adam", "sgd", "adamw"}
+
+    if job.optimizer.lower() not in allowed_optimizers:
+        return {
+            "success": False,
+            "message": "Optimizer must be adam, sgd, or adamw",
+        }
+
+    # 7. สร้าง Training Job
+    training_job = TrainingJob(
+        owner_id=job.owner_id,
+        project_id=job.project_id,
+        dataset_id=job.dataset_id,
+        mode=job.mode,
+        status="queued",
+        current_epoch=0,
+        total_epochs=job.total_epochs,
+        learning_rate=job.learning_rate,
+        batch_size=job.batch_size,
+        optimizer=job.optimizer.lower(),
+    )
+
+    db.add(training_job)
+    db.commit()
+    db.refresh(training_job)
+
+    return {
+        "success": True,
+        "message": "Training job created",
+        "job": serialize_training_job(training_job),
+    }
+
+
+@app.get("/training/jobs/{owner_id}")
+def get_training_jobs(
+    owner_id: int,
+    db: Session = Depends(get_db),
+):
+    owner = (
+        db.query(User)
+        .filter(User.id == owner_id)
+        .first()
+    )
+
+    if not owner:
+        return {
+            "success": False,
+            "message": "User not found",
+        }
+
+    training_jobs = (
+        db.query(TrainingJob)
+        .filter(TrainingJob.owner_id == owner_id)
+        .order_by(TrainingJob.created_at.desc())
+        .all()
+    )
+
+    return {
+        "success": True,
+        "jobs": [
+            serialize_training_job(training_job)
+            for training_job in training_jobs
+        ],
+    }
+
+
+@app.get("/training/job/{job_id}")
+def get_training_job(
+    job_id: int,
+    owner_id: int,
+    db: Session = Depends(get_db),
+):
+    training_job = (
+        db.query(TrainingJob)
+        .filter(
+            TrainingJob.id == job_id,
+            TrainingJob.owner_id == owner_id,
+        )
+        .first()
+    )
+
+    if not training_job:
+        return {
+            "success": False,
+            "message": "Training job not found or access denied",
+        }
+
+    return {
+        "success": True,
+        "job": serialize_training_job(training_job),
     }
 
 

@@ -27,3 +27,37 @@ class DatasetUrlCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     description: str = Field(default="", max_length=1000)
     source_url: HttpUrl
+
+
+class TrainingJobCreate(BaseModel):
+    owner_id: int
+    project_id: int
+    dataset_id: int
+
+    mode: str = "new"      # new / continue / finetune
+
+    total_epochs: int = 20
+    batch_size: int = 32
+    learning_rate: float = 0.001
+    optimizer: str = "adam"
+
+
+class TrainingJobResponse(BaseModel):
+    id: int
+
+    owner_id: int
+    project_id: int
+    dataset_id: int
+
+    mode: str
+    status: str
+
+    current_epoch: int
+    total_epochs: int
+
+    learning_rate: float
+    batch_size: int
+    optimizer: str
+
+    class Config:
+        from_attributes = True
