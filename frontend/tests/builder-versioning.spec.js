@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { Buffer } from "node:buffer";
 
 async function setup(page) {
   const state = {
@@ -80,4 +82,103 @@ test("does not increment for renaming until Save and rejects a blank name", asyn
   expect(state.saves).toHaveLength(0);
   await page.getByRole("button", { name: "Save Architecture", exact: true }).click();
   await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 5");
+});
+
+const exampleGraph = () => ({
+  nodes: [
+    { id: "input", type: "default", position: { x: 10, y: 20 }, data: { label: "Input", layerType: "Input", properties: { channels: 3, width: 32, height: 32 } } },
+    { id: "output", type: "default", position: { x: 10, y: 180 }, data: { label: "Output", layerType: "Output", properties: { classes: 2, activation: "softmax" } } },
+  ],
+  edges: [{ id: "input-output", source: "input", target: "output" }],
+});
+
+const uploadJson = (page, data) => page.getByLabel("Import Builder JSON", { exact: true }).setInputFiles({
+  name: "design.json", mimeType: "application/json", buffer: Buffer.from(typeof data === "string" ? data : JSON.stringify(data)),
+});
+
+test("exports the current draft and imports it into a new project with its own version sequence", async ({ page }) => {
+  const state = await setup(page);
+  state.project.version = 3;
+  state.project.architecture_json = JSON.stringify(exampleGraph());
+  await page.goto("/projects/1/builder");
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  await page.getByRole("textbox", { name: "Model name" }).fill("Portable classifier");
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export JSON", exact: true }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe("Portable-classifier-v3-draft.json");
+  const exported = JSON.parse(await readFile(await download.path(), "utf8"));
+  expect(exported.format).toBe("ai-trainer-builder");
+  expect(exported.source_version).toBe(3);
+  expect(exported.draft).toBe(true);
+  expect(exported.architecture).toEqual(exampleGraph());
+  expect(exported).not.toHaveProperty("owner_id");
+  expect(state.saves).toHaveLength(0);
+
+  state.project = { ...state.project, id: 2, name: "Project B", model_name: "New model", version: 0, architecture_json: "{}" };
+  await page.goto("/projects/2/builder");
+  await expect(page.getByRole("button", { name: "Import JSON", exact: true })).toBeEnabled();
+  await uploadJson(page, exported);
+  await expect(page.getByText(/JSON imported as a draft/)).toBeVisible();
+  await expect(page.getByLabel("Builder version", { exact: true })).toContainText("first save");
+  await expect(page.getByText("Portable classifier", { exact: true })).toBeVisible();
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  expect(state.saves).toHaveLength(0);
+  await page.getByRole("button", { name: "Save Architecture", exact: true }).click();
+  await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 1");
+  expect(state.saves[0].expected_version).toBe(0);
+  expect(JSON.parse(state.project.architecture_json).edges).toEqual(exampleGraph().edges);
+  await page.reload();
+  await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 1");
+  await expect(page.getByText("Portable classifier", { exact: true })).toBeVisible();
+});
+
+test("rejects malformed, unsupported and oversized imports without replacing the canvas", async ({ page }) => {
+  const state = await setup(page);
+  state.project.version = 2;
+  state.project.architecture_json = JSON.stringify(exampleGraph());
+  await page.goto("/projects/1/builder");
+  await expect(page.getByRole("button", { name: "Import JSON", exact: true })).toBeEnabled();
+  const duplicate = exampleGraph();
+  duplicate.nodes[1].id = "input";
+  const unknown = exampleGraph();
+  unknown.nodes[0].data.layerType = "UnknownLayer";
+  const invalidEdge = exampleGraph();
+  invalidEdge.edges[0].target = "missing";
+  const invalidProperty = exampleGraph();
+  invalidProperty.nodes[0].data.properties.width = 1000000000;
+  for (const [data, message] of [
+    ["not JSON", "This file is not valid JSON."],
+    [{ format: "ai-trainer-builder", schema_version: 99 }, "Unsupported Builder JSON format or schema version."],
+    [duplicate, "Every layer must have a unique string ID."],
+    [unknown, "Unsupported layer type: UnknownLayer"],
+    [invalidEdge, "Every connection must refer to existing layers."],
+    [invalidProperty, "Invalid Input property: width"],
+    [" ".repeat(2_000_001), "JSON files must be no larger than 2 MB."],
+  ]) {
+    await uploadJson(page, data);
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+    await expect(page.locator(".react-flow__node")).toHaveCount(2);
+    await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 2");
+  }
+  expect(state.saves).toHaveLength(0);
+});
+
+test("confirms replacement and accepts legacy nodes/edges JSON without changing version on import", async ({ page }) => {
+  const state = await setup(page);
+  state.project.version = 2;
+  state.project.architecture_json = JSON.stringify(exampleGraph());
+  await page.goto("/projects/1/builder");
+  await expect(page.getByRole("button", { name: "Import JSON", exact: true })).toBeEnabled();
+  const imported = { nodes: [exampleGraph().nodes[0]], edges: [] };
+  page.once("dialog", dialog => dialog.dismiss());
+  await uploadJson(page, imported);
+  await expect(page.getByRole("button", { name: "Import JSON", exact: true })).toBeEnabled();
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  page.once("dialog", dialog => dialog.accept());
+  await uploadJson(page, imported);
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 2");
+  await expect(page.getByText("Project A", { exact: true })).toBeVisible();
+  expect(state.saves).toHaveLength(0);
 });

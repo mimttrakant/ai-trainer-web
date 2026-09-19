@@ -1,5 +1,10 @@
 # Training graph checks
 
+`builder-versioning.spec.js` covers model names, per-save version increments,
+reload, failed/concurrent-tab saves, draft JSON export, import into a different
+project, legacy JSON, replacement confirmation, and invalid/oversized files.
+Builder API calls are mocked; no real project is saved by these browser tests.
+
 `trained-models.spec.js` also verifies PT / ONNX downloads, filenames, deletion
 confirmation/cancellation, retained graphs, disabled formats, failures and mobile
 layout. Its model bytes and API responses are synthetic. See
@@ -49,3 +54,7 @@ Remove-Item Env:TRAINING_LIVE_OWNER, Env:TRAINING_LIVE_PROJECT, Env:TRAINING_LIV
 The live check uses a separate browser context and blocks API write requests.
 It verifies that both graphs display the saved database points and reloads the
 page to verify history restoration. No training is started.
+
+With the same live environment variables, `tests/builder-live.spec.js` checks the
+running Builder's version and JSON export while blocking all API writes. It
+verifies the project's saved architecture and version stay unchanged.

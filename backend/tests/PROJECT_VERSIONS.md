@@ -34,3 +34,20 @@ docker compose exec -T -e WORKER_TEST_POSTGRES=1 backend python -m unittest disc
 
 As with existing APIs, ownership is checked against the supplied `owner_id`, not
 a server-authenticated identity. Production authentication is a separate task.
+
+## Portable Builder JSON
+
+Builder's Export JSON downloads the **current canvas**, including unsaved edits,
+using format `ai-trainer-builder`, `schema_version: 1`, `model_name`, `source_version`,
+`draft`, `exported_at`, and `architecture: { nodes, edges }`. It contains no trained
+weights, datasets, owner IDs or database IDs. Layer IDs are retained to preserve
+graph connections. Exporting does not save or increment the project version.
+
+Import JSON accepts this envelope or legacy plain `{ nodes, edges }` files. It
+validates size (2 MB), supported layers/property values, unique IDs, positions and
+edge references before replacing anything. Non-graph render fields are discarded.
+Replacing an existing canvas requires confirmation. The imported design is a
+draft; the destination project's version does not change until Save Architecture.
+A new destination project's first Save is Version 1 regardless of `source_version`.
+This validates the portable file shape, not whether a network is trainable; the
+worker still checks the actual architecture during model construction.

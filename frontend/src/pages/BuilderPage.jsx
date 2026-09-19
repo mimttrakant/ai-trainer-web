@@ -20,6 +20,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import Navbar from "../components/Navbar";
 import layerTemplates from "../layers";
+import { createBuilderExport, MAX_BUILDER_FILE_BYTES, parseBuilderJson } from "../utils/builderJson";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -52,6 +53,9 @@ function BuilderEditor({ id }) {
   const [editingName, setEditingName] = useState(false);
   const [savedDesign, setSavedDesign] = useState("");
   const saveInFlight = useRef(false);
+  const importInput = useRef(null);
+  const [importing, setImporting] = useState(false);
+  const [fileStatus, setFileStatus] = useState("");
   const ownerId = JSON.parse(localStorage.getItem("user") || "null")?.id;
   const design = JSON.stringify({
     model_name: modelName.trim(),
@@ -325,7 +329,7 @@ function BuilderEditor({ id }) {
   };
 
   const saveArchitecture = async () => {
-    if (saveInFlight.current || loading || !modelName.trim()) return;
+    if (saveInFlight.current || importing || loading || !modelName.trim()) return;
     saveInFlight.current = true;
     setSaving(true);
     const submittedDesign = design;
@@ -372,6 +376,49 @@ function BuilderEditor({ id }) {
     } finally {
       saveInFlight.current = false;
       setSaving(false);
+    }
+  };
+
+  const exportJson = () => {
+    try {
+      const exported = createBuilderExport({ modelName, version, dirty, nodes, edges });
+      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+      if (blob.size > MAX_BUILDER_FILE_BYTES) throw new Error("The exported design exceeds the 2 MB import limit.");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const name = modelName.trim().replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 80) || "model";
+      link.download = `${name}-v${version}${dirty ? "-draft" : ""}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setFileStatus("JSON exported. Includes the current canvas and model name, not trained weights or datasets.");
+    } catch (error) {
+      setFileStatus(error.message);
+    }
+  };
+
+  const importJson = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || saving || importing) return;
+    setImporting(true);
+    try {
+      if (file.size > MAX_BUILDER_FILE_BYTES) throw new Error("JSON files must be no larger than 2 MB.");
+      const imported = parseBuilderJson(await file.text(), modelName);
+      if (nodes.length && !window.confirm("Replace the current canvas and model name with this JSON? Unsaved changes will be replaced. The saved project stays unchanged until you click Save Architecture.")) return;
+      setNodes(imported.architecture.nodes);
+      setEdges(imported.architecture.edges);
+      setModelName(imported.modelName);
+      setSelectedNodeId(null);
+      setSaveStatus("");
+      setFileStatus(`JSON imported as a draft. Save Architecture to create Builder Version ${version + 1} in this project.`);
+      requestAnimationFrame(() => reactFlowInstance?.fitView());
+    } catch (error) {
+      setFileStatus(error.message);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -493,7 +540,7 @@ function BuilderEditor({ id }) {
             <button
               type="button"
               onClick={saveArchitecture}
-              disabled={loading || saving || nodes.length === 0 || !modelName.trim()}
+              disabled={loading || saving || importing || nodes.length === 0 || !modelName.trim()}
               style={{
                 ...saveButtonStyle,
 
@@ -510,12 +557,21 @@ function BuilderEditor({ id }) {
             >
               {saving ? "Saving…" : "Save Architecture"}
             </button>
+            <button type="button" style={{ ...saveButtonStyle, marginLeft: 8 }}
+              disabled={loading || saving || importing || nodes.length === 0 || !modelName.trim()} onClick={exportJson}>Export JSON</button>
+            <button type="button" style={{ ...saveButtonStyle, marginLeft: 8 }}
+              disabled={loading || saving || importing} onClick={() => importInput.current?.click()}>
+              {importing ? "Importing…" : "Import JSON"}
+            </button>
+            <input ref={importInput} type="file" accept=".json,application/json" aria-label="Import Builder JSON"
+              hidden onChange={importJson} />
 
             {saveStatus && (
               <span role="status" style={saveStatusStyle}>
                 {saveStatus}
               </span>
             )}
+            {fileStatus && <p role="status" style={{ fontSize: 14 }}>{fileStatus}</p>}
           </div>
         </div>
 
