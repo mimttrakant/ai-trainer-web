@@ -1,11 +1,18 @@
 """Immutable Builder saves and architecture snapshots at job submission."""
 
 import json
+from datetime import datetime, timedelta
+from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 
-from models import Project, ProjectVersion
+from database import get_db
+from models import Project, ProjectEditorSession, ProjectVersion
+
+router = APIRouter()
 
 
 def migrate_project_versions(engine):
@@ -67,20 +74,91 @@ def save_project_version(db, project_id, data):
     project.version += 1
     project.model_name = name
     project.architecture_json = data.architecture_json
-    db.add(ProjectVersion(
+    revision = ProjectVersion(
         project_id=project.id, owner_id=project.owner_id, version=project.version,
         model_name=name, architecture_json=data.architecture_json,
-    ))
+    )
+    db.add(revision)
     db.commit()
-    db.refresh(project)
-    return {"success": True, "message": "Architecture saved", "version": project.version, "model_name": project.model_name}
+    # Return this immutable row, not the mutable project head, which another
+    # editor could advance immediately after this transaction commits.
+    db.refresh(revision)
+    return {"success": True, "message": "Architecture saved", "revision_id": revision.id,
+            "version": revision.version, "model_name": revision.model_name}
 
 
-def snapshot_project(project):
+def snapshot_project(project, db=None, requested_version=None):
     # Called while the project's row lock is held. Save and Train cannot see
     # mismatched name/version/architecture from concurrent Builder saves.
+    if requested_version is not None:
+        revision = db.query(ProjectVersion).filter_by(
+            project_id=project.id, owner_id=project.owner_id, version=requested_version,
+        ).first()
+        if revision is None:
+            raise HTTPException(404, "The selected Builder version was not found in this project.")
+        return {"project_version": revision.version, "model_name": revision.model_name,
+                "architecture_json": revision.architecture_json}
     return {
         "project_version": project.version or None,
         "model_name": project.model_name or project.name,
         "architecture_json": project.architecture_json,
     }
+
+
+def owned_project(db, project_id, owner_id):
+    project = db.query(Project).filter_by(id=project_id, owner_id=owner_id).first()
+    if project is None:
+        raise HTTPException(404, "Project not found or access denied.")
+    return project
+
+
+@router.get("/projects/{project_id}/versions")
+def list_project_versions(project_id: int, owner_id: int, db: Session = Depends(get_db)):
+    project = owned_project(db, project_id, owner_id)
+    # List lightweight metadata only; fetch a graph only when the user selects it.
+    rows = db.query(ProjectVersion.id, ProjectVersion.version, ProjectVersion.model_name, ProjectVersion.created_at).filter_by(
+        project_id=project_id, owner_id=owner_id,
+    ).order_by(ProjectVersion.version.desc()).all()
+    return {"success": True, "latest_version": project.version, "versions": [
+        {"id": row.id, "version": row.version, "model_name": row.model_name, "created_at": row.created_at}
+        for row in rows
+    ]}
+
+
+@router.get("/projects/{project_id}/versions/{version}")
+def get_project_version(project_id: int, version: int, owner_id: int, db: Session = Depends(get_db)):
+    project = owned_project(db, project_id, owner_id)
+    revision = db.query(ProjectVersion).filter_by(project_id=project_id, owner_id=owner_id, version=version).first()
+    if revision is None:
+        raise HTTPException(404, "Builder version not found.")
+    return {"success": True, "latest_version": project.version, "revision": {
+        "id": revision.id, "version": revision.version, "model_name": revision.model_name,
+        "architecture_json": revision.architecture_json,
+    }}
+
+
+@router.put("/projects/{project_id}/editors/{session_id}")
+def editor_heartbeat(project_id: int, session_id: UUID, owner_id: int, db: Session = Depends(get_db)):
+    project = owned_project(db, project_id, owner_id)
+    now = datetime.utcnow()
+    cutoff = now - timedelta(seconds=60)
+    # Presence is advisory; row locking + expected_version protect every Save
+    # even when a tab is offline, asleep or has no registered heartbeat.
+    db.query(ProjectEditorSession).filter(ProjectEditorSession.project_id == project_id,
+        ProjectEditorSession.last_seen < cutoff).delete(synchronize_session=False)
+    statement = insert(ProjectEditorSession).values(session_id=str(session_id), project_id=project_id,
+                                                   owner_id=owner_id, last_seen=now)
+    db.execute(statement.on_conflict_do_update(index_elements=[ProjectEditorSession.session_id],
+        set_={"last_seen": now}, where=(ProjectEditorSession.project_id == project_id) & (ProjectEditorSession.owner_id == owner_id)))
+    db.commit()
+    count = db.query(ProjectEditorSession).filter(ProjectEditorSession.project_id == project_id,
+        ProjectEditorSession.last_seen >= cutoff).count()
+    return {"success": True, "active_editors": count, "latest_version": project.version}
+
+
+@router.delete("/projects/{project_id}/editors/{session_id}")
+def leave_editor(project_id: int, session_id: UUID, owner_id: int, db: Session = Depends(get_db)):
+    owned_project(db, project_id, owner_id)
+    db.query(ProjectEditorSession).filter_by(project_id=project_id, owner_id=owner_id, session_id=str(session_id)).delete()
+    db.commit()
+    return {"success": True}

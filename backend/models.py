@@ -50,6 +50,14 @@ class ProjectVersion(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ProjectEditorSession(Base):
+    __tablename__ = "project_editor_sessions"
+    session_id = Column(String, primary_key=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    owner_id = Column(Integer, nullable=False)
+    last_seen = Column(DateTime, nullable=False, index=True)
+
+
 class Dataset(Base):
     __tablename__ = "datasets"
 

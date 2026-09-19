@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from auth import hash_password, verify_password
 from database import engine, get_db
 from model_routes import router as model_router
-from project_versioning import migrate_project_versions, save_project_version, snapshot_project
+from project_versioning import migrate_project_versions, save_project_version, snapshot_project, router as project_version_router
 from dataset_service import (
     apply_scan_result,
     calculate_folder_size,
@@ -70,6 +70,7 @@ with engine.begin() as connection:
 
 app = FastAPI()
 app.include_router(model_router)
+app.include_router(project_version_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -809,7 +810,7 @@ def create_training_job(
 
     # 7. สร้าง Training Job
     training_job = TrainingJob(
-        **snapshot_project(project),
+        **snapshot_project(project, db, job.project_version),
         owner_id=job.owner_id,
         project_id=job.project_id,
         dataset_id=job.dataset_id,

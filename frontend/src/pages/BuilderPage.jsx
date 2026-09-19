@@ -21,6 +21,7 @@ import "reactflow/dist/style.css";
 import Navbar from "../components/Navbar";
 import layerTemplates from "../layers";
 import { createBuilderExport, MAX_BUILDER_FILE_BYTES, parseBuilderJson } from "../utils/builderJson";
+import { useEditorPresence, useProjectVersions } from "../utils/useProjectVersions";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -48,6 +49,9 @@ function BuilderEditor({ id }) {
   const [saveStatus, setSaveStatus] = useState("");
   const [modelName, setModelName] = useState("");
   const [version, setVersion] = useState(0);
+  const [headVersion, setHeadVersion] = useState(0);
+  const [switchingVersion, setSwitchingVersion] = useState(false);
+  const revisionRequest = useRef(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -57,12 +61,17 @@ function BuilderEditor({ id }) {
   const [importing, setImporting] = useState(false);
   const [fileStatus, setFileStatus] = useState("");
   const ownerId = JSON.parse(localStorage.getItem("user") || "null")?.id;
+  const history = useProjectVersions(API_URL, id, ownerId);
+  const presence = useEditorPresence(API_URL, id, ownerId, !loading);
   const design = JSON.stringify({
     model_name: modelName.trim(),
     nodes: nodes.map(({ id, type, position, data }) => ({ id, type, position, data })),
     edges: edges.map(({ id, source, target, sourceHandle, targetHandle }) => ({ id, source, target, sourceHandle, targetHandle })),
   });
   const dirty = design !== savedDesign;
+  const knownLatest = Math.max(history.latest, presence.latest_version, headVersion);
+  const versionOptions = version && !history.versions.some(row => row.version === version)
+    ? [{ version, model_name: modelName }, ...history.versions] : history.versions;
 
   const selectedNode =
     nodes.find((node) => node.id === selectedNodeId) ||
@@ -96,6 +105,7 @@ function BuilderEditor({ id }) {
       const name = project.model_name || project.name || "Untitled model";
       setModelName(name);
       setVersion(project.version || 0);
+      setHeadVersion(project.version || 0);
       setNodes(loadedNodes);
       setEdges(loadedEdges);
       setSavedDesign(JSON.stringify({
@@ -120,6 +130,41 @@ function BuilderEditor({ id }) {
     load();
     return () => controller.abort();
   }, [loadArchitecture]);
+
+  const loadVersion = async (selected) => {
+    if (saving || importing || switchingVersion) return;
+    if (dirty && !window.confirm("Load another saved version? Unsaved canvas changes will be discarded. Export JSON first if you want to keep them.")) return;
+    const request = ++revisionRequest.current;
+    setSwitchingVersion(true);
+    try {
+      const response = await axios.get(`${API_URL}/projects/${id}/versions/${selected}`, {
+        params: { owner_id: ownerId }, timeout: 15000,
+      });
+      if (request !== revisionRequest.current) return;
+      const { revision, latest_version: latest } = response.data;
+      const architecture = JSON.parse(revision.architecture_json);
+      const loadedNodes = architecture.nodes || [];
+      const loadedEdges = architecture.edges || [];
+      setNodes(loadedNodes);
+      setEdges(loadedEdges);
+      setModelName(revision.model_name);
+      setVersion(revision.version);
+      setHeadVersion(latest);
+      setSavedDesign(JSON.stringify({
+        model_name: revision.model_name.trim(),
+        nodes: loadedNodes.map(({ id, type, position, data }) => ({ id, type, position, data })),
+        edges: loadedEdges.map(({ id, source, target, sourceHandle, targetHandle }) => ({ id, source, target, sourceHandle, targetHandle })),
+      }));
+      setSelectedNodeId(null);
+      setFileStatus("");
+      setSaveStatus(`Loaded Builder Version ${revision.version}. The next Save creates a new version; it never replaces this one.`);
+      requestAnimationFrame(() => reactFlowInstance?.fitView());
+    } catch (error) {
+      setSaveStatus(error.response?.data?.detail || "Unable to load this version. Your current canvas is unchanged.");
+    } finally {
+      if (request === revisionRequest.current) setSwitchingVersion(false);
+    }
+  };
 
   const onConnect = useCallback(
     (connection) => {
@@ -329,7 +374,7 @@ function BuilderEditor({ id }) {
   };
 
   const saveArchitecture = async () => {
-    if (saveInFlight.current || importing || loading || !modelName.trim()) return;
+    if (saveInFlight.current || importing || loading || switchingVersion || !modelName.trim()) return;
     saveInFlight.current = true;
     setSaving(true);
     const submittedDesign = design;
@@ -346,7 +391,7 @@ function BuilderEditor({ id }) {
         {
           owner_id: ownerId,
           model_name: modelName.trim(),
-          expected_version: version,
+          expected_version: headVersion,
           architecture_json:
             JSON.stringify(architecture),
         }, { timeout: 15000 }
@@ -362,6 +407,8 @@ function BuilderEditor({ id }) {
       }
 
       setVersion(response.data.version);
+      setHeadVersion(response.data.version);
+      history.refresh();
       setSavedDesign(submittedDesign);
       setSaveStatus(`Saved as Builder Version ${response.data.version}`);
     } catch (error) {
@@ -413,7 +460,7 @@ function BuilderEditor({ id }) {
       setModelName(imported.modelName);
       setSelectedNodeId(null);
       setSaveStatus("");
-      setFileStatus(`JSON imported as a draft. Save Architecture to create Builder Version ${version + 1} in this project.`);
+      setFileStatus(`JSON imported as a draft. Save Architecture to create a new version after Builder Version ${headVersion} in this project.`);
       requestAnimationFrame(() => reactFlowInstance?.fitView());
     } catch (error) {
       setFileStatus(error.message);
@@ -529,18 +576,33 @@ function BuilderEditor({ id }) {
             <button type="button" disabled={loading || saving} onClick={() => setEditingName((value) => !value)}>Model</button>
             {editingName ? (
               <label>Model name <input aria-label="Model name" maxLength={150} value={modelName}
-                disabled={saving} onChange={(event) => setModelName(event.target.value)} /></label>
+              disabled={saving || switchingVersion} onChange={(event) => setModelName(event.target.value)} /></label>
             ) : <strong>{modelName || "Loading model…"}</strong>}
             <span aria-label="Builder version">{version > 0 ? `Builder Version ${version}` : "Not saved yet · first save creates Version 1"}</span>
             {!loading && dirty && <span>Unsaved changes</span>}
           </div>
-          <p style={{ fontSize: 13 }}>Each successful save creates a new version. Training uses the latest saved version, not unsaved changes.</p>
+          <p style={{ fontSize: 13 }}>Each successful save creates a new version. Choose a saved version on the Train page; unsaved changes are never trained.</p>
+          <div style={{ display: "flex", justifyContent: "center", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <label>Saved versions <select aria-label="Saved Builder version" value={version}
+              disabled={loading || saving || importing || switchingVersion} onChange={event => loadVersion(Number(event.target.value))}>
+              {!version && <option value={0}>No saved version yet</option>}
+              {versionOptions.map(row => <option key={row.version} value={row.version}>Version {row.version} · {row.model_name}</option>)}
+            </select></label>
+            <button type="button" onClick={history.refresh}>Refresh versions</button>
+            <span>Next save: new version after {headVersion}</span>
+          </div>
+          <p style={{ fontSize: 13 }}>
+            {presence.connected ? `${presence.active_editors} active Builder session(s).` : "Checking other editors… Save conflict protection stays enabled."}
+            {presence.active_editors > 1 && " Another editor has this project open. Saves are checked for conflicts."}
+          </p>
+          {knownLatest > headVersion && <p role="alert">A newer Builder Version {knownLatest} exists. Your draft is preserved. Export it before loading another version; stale saves will be rejected.</p>}
+          {history.error && <p role="alert">{history.error}</p>}
 
           <div>
             <button
               type="button"
               onClick={saveArchitecture}
-              disabled={loading || saving || importing || nodes.length === 0 || !modelName.trim()}
+              disabled={loading || saving || importing || switchingVersion || nodes.length === 0 || !modelName.trim()}
               style={{
                 ...saveButtonStyle,
 
@@ -560,7 +622,7 @@ function BuilderEditor({ id }) {
             <button type="button" style={{ ...saveButtonStyle, marginLeft: 8 }}
               disabled={loading || saving || importing || nodes.length === 0 || !modelName.trim()} onClick={exportJson}>Export JSON</button>
             <button type="button" style={{ ...saveButtonStyle, marginLeft: 8 }}
-              disabled={loading || saving || importing} onClick={() => importInput.current?.click()}>
+              disabled={loading || saving || importing || switchingVersion} onClick={() => importInput.current?.click()}>
               {importing ? "Importing…" : "Import JSON"}
             </button>
             <input ref={importInput} type="file" accept=".json,application/json" aria-label="Import Builder JSON"
@@ -591,7 +653,7 @@ function BuilderEditor({ id }) {
               <button
                 type="button"
                 key={layer.type}
-                disabled={loading || saving}
+                disabled={loading || saving || switchingVersion}
                 onClick={() => addLayer(layer)}
                 style={layerButtonStyle}
               >
@@ -606,6 +668,8 @@ function BuilderEditor({ id }) {
             style={canvasStyle}
           >
             <ReactFlow
+              nodesDraggable={!switchingVersion}
+              nodesConnectable={!switchingVersion}
               nodes={nodes}
               edges={edges}
               onInit={setReactFlowInstance}
@@ -620,7 +684,7 @@ function BuilderEditor({ id }) {
               onConnect={onConnect}
               onNodeClick={handleNodeClick}
               onPaneClick={handlePaneClick}
-              deleteKeyCode={[
+              deleteKeyCode={switchingVersion ? null : [
                 "Backspace",
                 "Delete",
               ]}

@@ -6,9 +6,27 @@ async function setup(page) {
   const state = {
     project: { id: 1, owner_id: 2, name: "Project A", model_name: "Project A", version: 0, architecture_json: "{}" },
     saves: [], fail: false, conflict: false, delay: 0,
+    revisions: [], activeEditors: 1, remoteVersion: 0,
   };
   await page.addInitScript(() => localStorage.setItem("user", JSON.stringify({ id: 2, username: "Builder test" })));
   await page.route("http://127.0.0.1:8000/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.includes("/editors/")) {
+      await route.fulfill({ json: { success: true, active_editors: state.activeEditors,
+        latest_version: Math.max(state.project.version, state.remoteVersion) } });
+      return;
+    }
+    const revisions = state.revisions.length ? state.revisions : state.project.version ? [{ ...state.project }] : [];
+    if (url.pathname.endsWith("/versions")) {
+      await route.fulfill({ json: { success: true, latest_version: state.project.version,
+        versions: revisions.map(row => ({ id: row.version, version: row.version, model_name: row.model_name })) } });
+      return;
+    }
+    if (url.pathname.includes("/versions/")) {
+      const revision = revisions.find(row => row.version === Number(url.pathname.split("/").at(-1)));
+      await route.fulfill({ json: { success: true, revision, latest_version: state.project.version } });
+      return;
+    }
     if (route.request().method() === "PUT") {
       const body = route.request().postDataJSON();
       state.saves.push(body);
@@ -20,6 +38,7 @@ async function setup(page) {
         expect(body.owner_id).toBe(2);
         expect(body.expected_version).toBe(state.project.version);
         state.project = { ...state.project, architecture_json: body.architecture_json, model_name: body.model_name, version: state.project.version + 1 };
+        state.revisions = [{ ...state.project }, ...revisions];
         await route.fulfill({ json: { success: true, version: state.project.version, model_name: state.project.model_name } });
       }
     } else {
@@ -116,6 +135,7 @@ test("exports the current draft and imports it into a new project with its own v
   expect(state.saves).toHaveLength(0);
 
   state.project = { ...state.project, id: 2, name: "Project B", model_name: "New model", version: 0, architecture_json: "{}" };
+  state.revisions = [];
   await page.goto("/projects/2/builder");
   await expect(page.getByRole("button", { name: "Import JSON", exact: true })).toBeEnabled();
   await uploadJson(page, exported);
@@ -181,4 +201,40 @@ test("confirms replacement and accepts legacy nodes/edges JSON without changing 
   await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 2");
   await expect(page.getByText("Project A", { exact: true })).toBeVisible();
   expect(state.saves).toHaveLength(0);
+});
+
+test("loads an older revision and saves a new row after the current head rather than overwriting history", async ({ page }) => {
+  const state = await setup(page);
+  state.project = { ...state.project, version: 3, model_name: "Latest model", architecture_json: JSON.stringify(exampleGraph()) };
+  const original = { ...state.project, version: 1, model_name: "Original model" };
+  state.revisions = [{ ...state.project }, original];
+  await page.goto("/projects/1/builder");
+  await page.getByRole("combobox", { name: "Saved Builder version", exact: true }).selectOption("1");
+  await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 1");
+  await expect(page.getByText("Original model", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  await page.getByRole("textbox", { name: "Model name" }).fill("Edited original");
+  await page.getByRole("button", { name: "Save Architecture", exact: true }).click();
+  await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 4");
+  expect(state.saves[0].expected_version).toBe(3);
+  expect(original.model_name).toBe("Original model");
+  await expect(page.getByRole("combobox", { name: "Saved Builder version", exact: true })).toHaveValue("4");
+});
+
+test("warns about concurrent editors and newer saves without changing a local draft", async ({ page }) => {
+  const state = await setup(page);
+  state.project = { ...state.project, version: 3, architecture_json: JSON.stringify(exampleGraph()) };
+  state.activeEditors = 2;
+  await page.goto("/projects/1/builder");
+  await expect(page.getByText(/2 active Builder session/)).toBeVisible();
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  await page.getByRole("textbox", { name: "Model name" }).fill("My unsaved draft");
+  state.remoteVersion = 4;
+  state.conflict = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("alert")).toContainText("A newer Builder Version 4 exists");
+  await expect(page.getByRole("textbox", { name: "Model name" })).toHaveValue("My unsaved draft");
+  await page.getByRole("button", { name: "Save Architecture", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("saved elsewhere");
+  await expect(page.getByLabel("Builder version", { exact: true })).toHaveText("Builder Version 3");
 });

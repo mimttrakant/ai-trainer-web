@@ -51,3 +51,24 @@ draft; the destination project's version does not change until Save Architecture
 A new destination project's first Save is Version 1 regardless of `source_version`.
 This validates the portable file shape, not whether a network is trainable; the
 worker still checks the actual architecture during model construction.
+
+## Revision selection and concurrent editors
+
+GET `/projects/{id}/versions?owner_id=...` lists lightweight revision metadata,
+including each new row's unique ID. GET `/projects/{id}/versions/{version}` loads
+one immutable design. Builder's dropdown loads old revisions; Save still creates
+a new row after the current acknowledged project head, never updating that old
+revision. The save response is read from the newly inserted revision, not from
+the mutable project head after the transaction unlocks.
+
+Training submission accepts `project_version` and snapshots exactly that saved
+revision from the same owned project. Omission retains the legacy latest-version
+API behavior; the Train UI sends an explicit selected version.
+
+Builder sessions heartbeat every 20 seconds while visible and expire after 60
+seconds without a heartbeat. The UI reports active sessions, not distinct people,
+and warns about newer saved versions without replacing local edits. Leaving the
+page removes its presence entry when possible. Presence is advisory, never a
+mutex: optimistic `expected_version`, PostgreSQL row locks and the unique
+constraint protect writes even when heartbeat requests fail. Project access
+still follows existing ownership rules; this does not add project sharing.

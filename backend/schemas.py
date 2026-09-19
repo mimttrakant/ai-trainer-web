@@ -36,6 +36,7 @@ class TrainingJobCreate(BaseModel):
     owner_id: int
     project_id: int
     dataset_id: int
+    project_version: int | None = Field(default=None, gt=0)
 
     mode: str = "new"      # new / continue / finetune
 

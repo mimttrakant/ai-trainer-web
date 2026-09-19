@@ -9,6 +9,7 @@ import re
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -16,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 import database
-from models import Base, Dataset, ModelVersion, Project, ProjectVersion, TrainingJob, User
+from models import Base, Dataset, ModelVersion, Project, ProjectEditorSession, ProjectVersion, TrainingJob, User
 from project_versioning import migrate_project_versions
 
 
@@ -79,6 +80,7 @@ class ProjectVersioningTests(unittest.TestCase):
         with self.sessions() as db:
             versions = db.query(ProjectVersion).order_by(ProjectVersion.version).all()
             self.assertEqual([v.version for v in versions], [1, 2, 3])
+            self.assertEqual(len({v.id for v in versions}), 3)
             self.assertEqual([v.model_name for v in versions], ["Classifier 1", "Classifier 2", "Classifier 3"])
 
     def test_failed_invalid_and_unauthorized_saves_do_not_increment(self):
@@ -130,6 +132,45 @@ class ProjectVersioningTests(unittest.TestCase):
             self.assertEqual(db.query(ProjectVersion).count(), 1)
             self.assertIsNone(db.query(TrainingJob).one().project_version)
         self.assertEqual(self.save(1).json()["version"], 2)
+
+    def test_history_selection_and_training_use_the_requested_revision(self):
+        self.save(0, "Original")
+        self.save(1, "Latest")
+        listing = self.client.get(f"/projects/{self.id}/versions?owner_id=1").json()
+        self.assertEqual([row["version"] for row in listing["versions"]], [2, 1])
+        self.assertNotIn("architecture_json", listing["versions"][0])
+        old = self.client.get(f"/projects/{self.id}/versions/1?owner_id=1").json()
+        self.assertEqual(old["revision"]["model_name"], "Original")
+        self.assertEqual(old["latest_version"], 2)
+        response = self.client.post("/training/jobs", json={"owner_id": 1, "project_id": self.id,
+            "dataset_id": 1, "project_version": 1})
+        self.assertEqual(response.json()["job"]["project_version"], 1)
+        self.assertEqual(response.json()["job"]["model_name"], "Original")
+        self.assertEqual(self.save(2, "Edited old version", old["revision"]["architecture_json"]).json()["version"], 3)
+        self.assertEqual(self.client.get(f"/projects/{self.id}/versions/1?owner_id=1").json()["revision"]["model_name"], "Original")
+        invalid = self.client.post("/training/jobs", json={"owner_id": 1, "project_id": self.id,
+            "dataset_id": 1, "project_version": 999})
+        self.assertEqual(invalid.status_code, 404)
+        self.assertEqual(self.client.get(f"/projects/{self.id}/versions?owner_id=999").status_code, 404)
+        self.assertEqual(self.client.get(f"/projects/{self.id}/versions/1?owner_id=999").status_code, 404)
+
+    def test_presence_counts_separate_tabs_expires_and_does_not_replace_save_locks(self):
+        first, second = str(uuid4()), str(uuid4())
+        url = f"/projects/{self.id}/editors/"
+        self.assertEqual(self.client.put(f"{url}{first}?owner_id=1").json()["active_editors"], 1)
+        self.assertEqual(self.client.put(f"{url}{second}?owner_id=1").json()["active_editors"], 2)
+        self.assertEqual(self.client.put(f"{url}{first}?owner_id=1").json()["active_editors"], 2)
+        self.assertEqual(self.client.put(f"{url}{uuid4()}?owner_id=2").status_code, 404)
+        with self.sessions() as db:
+            db.get(ProjectEditorSession, second).last_seen = datetime.utcnow() - timedelta(seconds=61)
+            db.commit()
+        self.assertEqual(self.client.put(f"{url}{first}?owner_id=1").json()["active_editors"], 1)
+        self.assertEqual(self.client.delete(f"{url}{first}?owner_id=1").status_code, 200)
+        with self.sessions() as db:
+            self.assertEqual(db.query(ProjectEditorSession).count(), 0)
+        # Save still works safely when no editor heartbeat exists.
+        self.assertEqual(self.save(0).json()["version"], 1)
+        self.assertEqual(self.save(0).status_code, 409)
 
 
 if __name__ == "__main__":

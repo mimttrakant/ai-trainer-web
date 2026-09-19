@@ -5,6 +5,7 @@ import TrainingCharts from "../components/TrainingCharts";
 import ModelActions from "../components/ModelActions";
 import { isArchivedTrainingJob, visibleTrainingJobs } from "../utils/trainingJobs";
 import { completedJobsSignature, reuseUnchangedList } from "../utils/trainingData";
+import { useProjectVersions } from "../utils/useProjectVersions";
 
 const API_URL = "http://localhost:8000";
 const JOBS_PER_PAGE = 5;
@@ -20,6 +21,10 @@ function TrainingPage() {
 
   const user = JSON.parse(localStorage.getItem("user") || "null");
   const ownerId = user?.id;
+  const versionHistory = useProjectVersions(API_URL, id, ownerId);
+  const [trainingVersion, setTrainingVersion] = useState("");
+  const selectedTrainingVersion = versionHistory.versions.find(row => String(row.version) === trainingVersion)
+    || versionHistory.versions[0];
 
   const [datasets, setDatasets] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -227,6 +232,11 @@ function TrainingPage() {
       return;
     }
 
+    if (!selectedTrainingVersion || versionHistory.error) {
+      setMessage("Select an available saved Builder version before training.");
+      return;
+    }
+
     setStarting(true);
     setMessage("");
 
@@ -245,6 +255,7 @@ function TrainingPage() {
             owner_id: Number(ownerId),
             project_id: Number(id),
             dataset_id: Number(datasetId),
+            project_version: selectedTrainingVersion.version,
 
             mode: "new",
 
@@ -266,7 +277,7 @@ function TrainingPage() {
 
       if (!data.success) {
         setMessage(
-          data.message ||
+          data.detail || data.message ||
           "Unable to start training."
         );
         return;
@@ -433,9 +444,7 @@ function TrainingPage() {
               </h2>
 
               <p style={styles.cardDescription}>
-                Train the current project
-                architecture with one of
-                your datasets.
+                Train the selected saved Builder version with one of your datasets.
               </p>
             </div>
           </div>
@@ -444,6 +453,19 @@ function TrainingPage() {
             onSubmit={startTraining}
             style={styles.form}
           >
+            <label style={styles.field}>
+              <span style={styles.label}>Model version to train</span>
+              <select aria-label="Model version to train" style={styles.input}
+                value={selectedTrainingVersion?.version || ""} disabled={starting}
+                onChange={event => setTrainingVersion(event.target.value)}>
+                {!selectedTrainingVersion && <option value="">No saved Builder versions</option>}
+                {versionHistory.versions.map(row => <option key={row.version} value={row.version}>
+                  Version {row.version} · {row.model_name}
+                </option>)}
+              </select>
+              <button type="button" onClick={versionHistory.refresh} style={styles.secondaryButton}>Refresh versions</button>
+              {versionHistory.error && <span role="alert">{versionHistory.error}</span>}
+            </label>
             <label style={styles.field}>
               <span style={styles.label}>
                 Dataset

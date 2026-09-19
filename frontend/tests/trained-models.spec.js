@@ -39,7 +39,8 @@ async function setup(page) {
       }
       return;
     }
-    const payload = url.pathname.endsWith("/models") ? { models: state.models }
+    const payload = url.pathname.endsWith("/versions") ? { latest_version: 2, versions: [{ id: 2, version: 2, model_name: "Test model" }] }
+      : url.pathname.endsWith("/models") ? { models: state.models }
       : url.pathname.endsWith("/metrics") ? { metrics: [{ epoch: 1, train_loss: 0.5, val_loss: 0.6, train_accuracy: 80, val_accuracy: 75 }] }
         : url.pathname.endsWith("/jobs") ? { jobs: [{ id: 4, dataset_id: 5, status: "completed", current_epoch: 1, total_epochs: 1 }] }
           : { datasets: [{ id: 5, name: "Test dataset", supported: true }] };

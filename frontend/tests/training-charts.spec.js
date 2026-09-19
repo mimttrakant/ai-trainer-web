@@ -22,12 +22,14 @@ async function setup(page, status = "completed") {
     fail: false,
     delay: 0,
     createFails: false,
+    requestedVersion: null,
   };
   await page.addInitScript(() => localStorage.setItem("user", JSON.stringify({ id: 2, username: "Chart test" })));
   await page.route("http://localhost:8000/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let payload;
     if (path === "/training/jobs" && route.request().method() === "POST") {
+      state.requestedVersion = route.request().postDataJSON().project_version;
       if (state.createFails) {
         payload = { success: false, message: "Unable to start training." };
       } else {
@@ -36,6 +38,8 @@ async function setup(page, status = "completed") {
         state.history[8] = [];
         payload = { success: true, job };
       }
+    } else if (path.endsWith("/versions")) {
+      payload = { success: true, latest_version: 2, versions: [{ id: 2, version: 2, model_name: "Latest model" }, { id: 1, version: 1, model_name: "Original model" }] };
     } else if (path.endsWith("/metrics")) {
       state.metricCalls += 1;
       if (state.fail) {
@@ -197,6 +201,14 @@ test("keeps the selected history when starting a new job fails", async ({ page }
   await expect(page.getByText("Unable to start training.", { exact: true })).toBeVisible();
   await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #6 ·/);
   await expectEpochs(page, 1);
+});
+
+test("submits the exact saved Builder version selected for training", async ({ page }) => {
+  const state = await setup(page);
+  await page.goto("/projects/1/training");
+  await page.getByRole("combobox", { name: "Model version to train", exact: true }).selectOption("1");
+  await page.getByRole("button", { name: "Start Training", exact: true }).click();
+  await expect.poll(() => state.requestedVersion).toBe(1);
 });
 
 test("renders both charts on a narrow screen without horizontal overflow", async ({ page }, testInfo) => {
