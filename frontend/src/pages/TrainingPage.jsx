@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
+import TrainingCharts from "../components/TrainingCharts";
 
 const API_URL = "http://localhost:8000";
 
@@ -521,6 +522,15 @@ function TrainingPage() {
             </button>
           </form>
         </section>
+
+        <TrainingCharts
+          key={`${ownerId}:${id}`}
+          apiUrl={API_URL}
+          ownerId={ownerId}
+          jobs={jobs}
+          datasets={datasets}
+          loading={loading}
+        />
 
         {/* TRAINING JOBS */}
 

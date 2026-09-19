@@ -1,0 +1,87 @@
+.training-charts {
+  background: rgba(23, 26, 35, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 22px;
+  padding: 26px;
+  margin-bottom: 24px;
+  color: #f4f6fb;
+}
+
+.training-charts__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.training-charts h2 { margin: 0; font-size: 22px; }
+.training-charts h3 { margin: 0 0 16px; font-size: 17px; }
+.training-charts__header p,
+.training-charts__hint { color: #9ba3b5; line-height: 1.6; font-size: 14px; }
+.training-charts__header p { margin: 7px 0 0; }
+
+.training-charts__selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #c7cbe0;
+  max-width: 100%;
+}
+
+.training-charts__selector select {
+  background: #181b24;
+  color: #f4f6fb;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 10px 12px;
+  width: 340px;
+  max-width: 100%;
+}
+
+.training-charts__selector select:focus-visible {
+  outline: 2px solid #9da9ff;
+  outline-offset: 3px;
+}
+
+.training-charts__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 22px;
+  font-size: 13px;
+  color: #aeb5c6;
+}
+
+.training-charts__badge {
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: rgba(157, 169, 255, 0.12);
+  color: #c9ceff;
+}
+
+.training-charts__badge--live { background: rgba(52, 211, 153, 0.12); color: #6ee7b7; }
+.training-charts__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.training-charts__plot {
+  min-width: 0;
+  padding: 18px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(14, 16, 22, 0.54);
+}
+.training-charts__plot h3 { padding-left: 8px; }
+.training-charts__placeholder { min-height: 290px; display: grid; place-items: center; text-align: center; padding: 16px; color: #9ba3b5; }
+.training-charts__empty { padding: 24px 0; color: #9ba3b5; }
+.training-charts__error { border: 1px solid rgba(248, 113, 113, 0.3); background: rgba(127, 29, 29, 0.18); color: #fca5a5; border-radius: 10px; padding: 12px; font-size: 14px; }
+
+@media (max-width: 800px) {
+  .training-charts__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .training-charts { padding: 18px 12px; }
+  .training-charts__selector, .training-charts__selector select { width: 100%; }
+}
