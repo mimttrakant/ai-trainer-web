@@ -15,6 +15,12 @@ timezone, preserving historical graphs, five-job pagination, keeping active jobs
 first, and returning to the first page after starting a new job. The retention
 rule only hides older completed jobs in the default view; it deletes no data.
 
+Refresh-performance checks verify 3-second polling while jobs are active and
+30-second polling when idle, with an immediate refresh on return to the tab.
+They also verify that unchanged charts have no DOM mutations, metrics are fetched
+on new epochs/status changes, and model lists reload on completion (with retries
+after a failed refresh). Hidden tabs pause job requests until they become visible.
+
 The optional live test reads an existing job from the app on `localhost:5173`
 and its API on `localhost:8000`. Supply the IDs of a job with saved metrics:
 

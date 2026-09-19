@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import TrainingCharts from "../components/TrainingCharts";
 import { isArchivedTrainingJob, visibleTrainingJobs } from "../utils/trainingJobs";
+import { completedJobsSignature, reuseUnchangedList } from "../utils/trainingData";
 
 const API_URL = "http://localhost:8000";
 const JOBS_PER_PAGE = 5;
@@ -11,6 +12,10 @@ function TrainingPage() {
   const { id } = useParams();
   const [, setSearchParams] = useSearchParams();
   const jobsRequestId = useRef(0);
+  const modelsRequestId = useRef(0);
+  const datasetsRequestId = useRef(0);
+  const jobsSnapshot = useRef([]);
+  const loadedModelsSignature = useRef(null);
 
   const user = JSON.parse(localStorage.getItem("user") || "null");
   const ownerId = user?.id;
@@ -21,6 +26,7 @@ function TrainingPage() {
   const [showJobHistory, setShowJobHistory] = useState(false);
   const [jobPage, setJobPage] = useState(1);
   const [jobsNow, setJobsNow] = useState(() => Date.now());
+  const hasActiveJobs = jobs.some((job) => job.status === "queued" || job.status === "training");
 
   const archivedJobCount = jobs.filter((job) => isArchivedTrainingJob(job, jobsNow)).length;
   const visibleJobs = visibleTrainingJobs(jobs, showJobHistory, jobsNow);
@@ -45,26 +51,19 @@ function TrainingPage() {
 
   const loadDatasets = useCallback(async () => {
     if (!ownerId) return;
+    const requestId = ++datasetsRequestId.current;
 
     try {
       const response = await fetch(
-        `${API_URL}/datasets/${ownerId}`
+        `${API_URL}/datasets/${ownerId}`,
+        { signal: AbortSignal.timeout(15000), cache: "no-store" }
       );
 
       const data = await response.json();
 
-      if (data.success) {
-        setDatasets(data.datasets || []);
-
-        if (
-          !datasetId &&
-          data.datasets &&
-          data.datasets.length > 0
-        ) {
-          setDatasetId(
-            String(data.datasets[0].id)
-          );
-        }
+      if (data.success && requestId === datasetsRequestId.current) {
+        setDatasets((previous) => reuseUnchangedList(previous, data.datasets || []));
+        setDatasetId((previous) => previous || String(data.datasets?.[0]?.id || ""));
       }
     } catch (error) {
       console.error(
@@ -72,34 +71,7 @@ function TrainingPage() {
         error
       );
     }
-  }, [ownerId, datasetId]);
-
-  // --------------------------------------------------
-  // Load Training Jobs
-  // --------------------------------------------------
-
-  const loadJobs = useCallback(async () => {
-    if (!ownerId || !id) return;
-    const requestId = ++jobsRequestId.current;
-
-    try {
-      const response = await fetch(
-        `${API_URL}/training/projects/${id}/jobs?owner_id=${ownerId}`
-      );
-
-      const data = await response.json();
-
-      if (data.success && requestId === jobsRequestId.current) {
-        setJobs(data.jobs || []);
-        setJobsNow(Date.now());
-      }
-    } catch (error) {
-      console.error(
-        "Load jobs error:",
-        error
-      );
-    }
-  }, [id, ownerId]);
+  }, [ownerId]);
 
   // --------------------------------------------------
   // Load Trained Models
@@ -107,16 +79,20 @@ function TrainingPage() {
 
   const loadModels = useCallback(async () => {
     if (!ownerId || !id) return;
+    const requestId = ++modelsRequestId.current;
+    const signature = completedJobsSignature(jobsSnapshot.current);
 
     try {
       const response = await fetch(
-        `${API_URL}/training/projects/${id}/models?owner_id=${ownerId}`
+        `${API_URL}/training/projects/${id}/models?owner_id=${ownerId}`,
+        { signal: AbortSignal.timeout(15000), cache: "no-store" }
       );
 
       const data = await response.json();
 
-      if (data.success) {
-        setModels(data.models || []);
+      if (data.success && requestId === modelsRequestId.current) {
+        setModels((previous) => reuseUnchangedList(previous, data.models || []));
+        loadedModelsSignature.current = signature;
       }
     } catch (error) {
       console.error(
@@ -126,28 +102,59 @@ function TrainingPage() {
     }
   }, [id, ownerId]);
 
+  const loadJobs = useCallback(async () => {
+    if (!ownerId || !id) return;
+    const requestId = ++jobsRequestId.current;
+    try {
+      const response = await fetch(`${API_URL}/training/projects/${id}/jobs?owner_id=${ownerId}`, {
+        signal: AbortSignal.timeout(15000), cache: "no-store",
+      });
+      const data = await response.json();
+      if (data.success && requestId === jobsRequestId.current) {
+        const next = reuseUnchangedList(jobsSnapshot.current, data.jobs || []);
+        jobsSnapshot.current = next;
+        setJobs(next);
+        const now = Date.now();
+        // Only update the retention clock if a job actually crosses its cutoff.
+        setJobsNow((previous) => next.some((job) =>
+          isArchivedTrainingJob(job, previous) !== isArchivedTrainingJob(job, now)) ? now : previous);
+        if (loadedModelsSignature.current !== completedJobsSignature(next)) {
+          await loadModels();
+        }
+      }
+    } catch (error) {
+      console.error("Load jobs error:", error);
+    }
+  }, [id, ownerId, loadModels]);
+
   // --------------------------------------------------
   // Initial Load
   // --------------------------------------------------
 
   useEffect(() => {
+    let disposed = false;
+    loadedModelsSignature.current = null;
     const loadPage = async () => {
       setLoading(true);
 
       await Promise.all([
         loadDatasets(),
         loadJobs(),
-        loadModels(),
       ]);
 
-      setLoading(false);
+      if (!disposed) setLoading(false);
     };
 
     loadPage();
+    return () => {
+      disposed = true;
+      jobsRequestId.current += 1;
+      modelsRequestId.current += 1;
+      datasetsRequestId.current += 1;
+    };
   }, [
     loadDatasets,
     loadJobs,
-    loadModels,
   ]);
 
   // --------------------------------------------------
@@ -156,23 +163,40 @@ function TrainingPage() {
 
   useEffect(() => {
     if (!ownerId || !id) return;
-
-    const interval = setInterval(
-      async () => {
-        await loadJobs();
-        await loadModels();
-      },
-      3000
-    );
-
+    let disposed = false;
+    let inFlight = false;
+    let timer;
+    const delay = hasActiveJobs ? 3000 : 30000;
+    const refresh = async () => {
+      if (disposed || inFlight) return;
+      clearTimeout(timer);
+      inFlight = true;
+      try {
+        if (document.visibilityState === "visible") await loadJobs();
+      } finally {
+        inFlight = false;
+        if (!disposed) timer = setTimeout(refresh, delay);
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    timer = setTimeout(refresh, delay);
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("online", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
-      clearInterval(interval);
+      disposed = true;
+      clearTimeout(timer);
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [
     id,
     ownerId,
     loadJobs,
-    loadModels,
+    hasActiveJobs,
   ]);
 
   // --------------------------------------------------
@@ -248,7 +272,8 @@ function TrainingPage() {
       // Select the newly created job immediately, even if it is still queued.
       // Ignore older list requests that could remove it while refreshing.
       jobsRequestId.current += 1;
-      setJobs((previous) => [data.job, ...previous.filter((job) => job.id !== data.job.id)]);
+      jobsSnapshot.current = [data.job, ...jobsSnapshot.current.filter((job) => job.id !== data.job.id)];
+      setJobs(jobsSnapshot.current);
       setShowJobHistory(false);
       setJobPage(1);
       setJobsNow(Date.now());
@@ -571,7 +596,8 @@ function TrainingPage() {
               </h2>
 
               <p style={styles.cardDescription}>
-                Progress refreshes every 3 seconds. Completed jobs older than
+                {hasActiveJobs ? "Progress refreshes every 3 seconds." : "No active jobs. Updates every 30 seconds."}
+                {" "}Completed jobs older than
                 2 days are hidden from Recent jobs. Their history and graphs are kept.
               </p>
             </div>

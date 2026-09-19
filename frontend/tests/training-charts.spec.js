@@ -16,6 +16,9 @@ async function setup(page, status = "completed") {
     ],
     history: { 7: [epoch(2), epoch(1)], 6: [epoch(1)] },
     metricCalls: 0,
+    jobCalls: 0,
+    modelCalls: 0,
+    modelFailures: 0,
     fail: false,
     delay: 0,
     createFails: false,
@@ -43,8 +46,15 @@ async function setup(page, status = "completed") {
       payload = { success: true, job_id: Number(jobId), metrics: [...(state.history[jobId] || [])] };
       if (state.delay) await new Promise((resolve) => setTimeout(resolve, state.delay));
     } else if (path.endsWith("/jobs")) {
+      state.jobCalls += 1;
       payload = { success: true, jobs: state.jobs };
     } else if (path.endsWith("/models")) {
+      state.modelCalls += 1;
+      if (state.modelFailures > 0) {
+        state.modelFailures -= 1;
+        await route.fulfill({ status: 503, json: { success: false } });
+        return;
+      }
       payload = { success: true, models: [] };
     } else {
       payload = { success: true, datasets: [{ id: 4, name: "Test images", supported: true }] };
@@ -95,16 +105,21 @@ test("loads saved history, restores it after reload, navigation and reopening a 
 test("updates after each epoch, avoids duplicates and fetches the final completed epoch", async ({ page }) => {
   const state = await setup(page, "queued");
   state.history[7] = [];
+  state.jobs[0].current_epoch = 0;
   await page.goto("/projects/1/training");
   await expect(charts(page).getByText("Waiting for the first completed epoch…")).toHaveCount(2);
   state.jobs[0].status = "training";
+  state.jobs[0].current_epoch = 1;
   state.history[7] = [epoch(1)];
   await expectEpochs(page, 1);
   const calls = state.metricCalls;
-  await expect.poll(() => state.metricCalls).toBeGreaterThan(calls);
+  const jobCalls = state.jobCalls;
+  await expect.poll(() => state.jobCalls).toBeGreaterThan(jobCalls);
+  expect(state.metricCalls).toBe(calls);
   await expectEpochs(page, 1);
   state.history[7] = [epoch(1), epoch(2), epoch(3)];
   state.jobs[0].status = "completed";
+  state.jobs[0].current_epoch = 3;
   await expect(charts(page).getByText("Saved history", { exact: true })).toBeVisible();
   await expectEpochs(page, 3);
   const finishedCalls = state.metricCalls;
@@ -117,6 +132,7 @@ test("keeps existing graphs on network failure and recovers automatically", asyn
   await page.goto("/projects/1/training");
   await expectEpochs(page, 2);
   state.fail = true;
+  state.jobs[0].current_epoch = 3;
   await expect(charts(page).getByRole("alert")).toContainText("retrying automatically");
   await expectEpochs(page, 2);
   state.fail = false;
@@ -156,6 +172,7 @@ test("selects the newly created job instead of a saved selection or another runn
   await expectEpochs(page, 0);
   await expect(charts(page).getByText("Waiting for the first completed epoch…")).toHaveCount(2);
   state.jobs[0].status = "training";
+  state.jobs[0].current_epoch = 1;
   state.history[8] = [epoch(1)];
   await expectEpochs(page, 1);
   await page.reload();
@@ -229,7 +246,7 @@ test.describe("training job history visibility", () => {
     expect(consoleErrors).toEqual([]);
   });
 
-  test("updates the 48-hour cutoff while the page stays open and explains an empty recent list", async ({ page }) => {
+  test("updates the 48-hour cutoff on refresh and explains an empty recent list", async ({ page }) => {
     const state = await setup(page);
     state.jobs = [{ ...state.jobs[0], finished_at: "2026-09-17T12:00:01" }];
     await page.clock.setFixedTime(now);
@@ -237,6 +254,7 @@ test.describe("training job history visibility", () => {
     const list = jobList(page);
     await expect(list.getByRole("article")).toHaveCount(1);
     await page.clock.setFixedTime(new Date("2026-09-19T12:00:02Z"));
+    await list.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(list.getByRole("article")).toHaveCount(0);
     await expect(list.getByText("No active or recent jobs. Choose All history to view older completed jobs.")).toBeVisible();
     await list.getByRole("button", { name: "All history (1)", exact: true }).click();
@@ -278,5 +296,64 @@ test.describe("training job history visibility", () => {
     await expect(list.getByRole("article")).toHaveCount(3);
     await expect(list.getByText("Page 1 of 1", { exact: true })).toBeVisible();
     await expect(list.getByText("Job #20", { exact: true })).toBeVisible();
+  });
+});
+
+test.describe("training refresh performance", () => {
+  test("idle pages poll jobs after 30 seconds without repainting unchanged charts or reloading models", async ({ page }) => {
+    await page.clock.install();
+    const state = await setup(page);
+    await page.goto("/projects/1/training");
+    await expectEpochs(page, 2);
+    await expect(page.getByText("No active jobs. Updates every 30 seconds.", { exact: false })).toBeVisible();
+    const jobs = state.jobCalls;
+    const models = state.modelCalls;
+    const metrics = state.metricCalls;
+    await page.evaluate(() => {
+      window.chartChanges = 0;
+      const observer = new MutationObserver(records => { window.chartChanges += records.length; });
+      document.querySelectorAll('.training-charts__plot').forEach(plot =>
+        observer.observe(plot, { attributes: true, childList: true, subtree: true, characterData: true }));
+    });
+    await page.clock.fastForward(10000);
+    expect(state.jobCalls).toBe(jobs);
+    await page.clock.fastForward(21000);
+    await expect.poll(() => state.jobCalls).toBeGreaterThan(jobs);
+    expect(state.modelCalls).toBe(models);
+    expect(state.metricCalls).toBe(metrics);
+    await page.getByRole("region", { name: "Training Jobs", exact: true }).getByRole("button", { name: /All history/ }).click();
+    expect(await page.evaluate(() => window.chartChanges)).toBe(0);
+  });
+
+  test("active jobs fetch metrics on new epochs and reload models once when training completes", async ({ page }) => {
+    const state = await setup(page, "training");
+    await page.goto("/projects/1/training");
+    await expectEpochs(page, 2);
+    const models = state.modelCalls;
+    const metrics = state.metricCalls;
+    const jobs = state.jobCalls;
+    await expect.poll(() => state.jobCalls).toBeGreaterThan(jobs);
+    expect(state.modelCalls).toBe(models);
+    expect(state.metricCalls).toBe(metrics);
+    state.jobs[0].current_epoch = 3;
+    state.history[7] = [epoch(1), epoch(2), epoch(3)];
+    await expectEpochs(page, 3);
+    expect(state.modelCalls).toBe(models);
+    state.jobs[0].status = "completed";
+    await expect.poll(() => state.modelCalls).toBe(models + 1);
+    await expect(charts(page).getByText("Saved history", { exact: true })).toBeVisible();
+  });
+
+  test("returning to the tab finds new work immediately and retries a failed model refresh", async ({ page }) => {
+    const state = await setup(page);
+    await page.goto("/projects/1/training");
+    await expectEpochs(page, 2);
+    state.jobs[0].status = "training";
+    state.modelFailures = 1;
+    const models = state.modelCalls;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByText("Progress refreshes every 3 seconds.", { exact: false })).toBeVisible();
+    await expect.poll(() => state.modelCalls).toBeGreaterThanOrEqual(models + 2);
+    await expectEpochs(page, 2);
   });
 });

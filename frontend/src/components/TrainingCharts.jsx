@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
@@ -11,11 +11,12 @@ import {
   YAxis,
 } from "recharts";
 import "./TrainingCharts.css";
+import { reuseUnchangedList } from "../utils/trainingData";
 
 const POLL_INTERVAL = 3000;
 const isActive = (status) => status === "queued" || status === "training";
 
-export default function TrainingCharts({ apiUrl, ownerId, jobs, datasets, loading }) {
+const TrainingCharts = memo(function TrainingCharts({ apiUrl, ownerId, jobs, datasets, loading }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedJob = jobs.find((job) => String(job.id) === searchParams.get("job"))
     || jobs.find((job) => isActive(job.status))
@@ -59,9 +60,11 @@ export default function TrainingCharts({ apiUrl, ownerId, jobs, datasets, loadin
       )}
     </section>
   );
-}
+});
 
-function JobCharts({ apiUrl, ownerId, job }) {
+export default TrainingCharts;
+
+const JobCharts = memo(function JobCharts({ apiUrl, ownerId, job }) {
   const [metrics, setMetrics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -95,7 +98,7 @@ function JobCharts({ apiUrl, ownerId, job }) {
         if (disposed) return;
         // Each response contains the full database history, including epochs
         // recorded while this page was closed. Replace it rather than append.
-        setMetrics([...data.metrics].sort((a, b) => a.epoch - b.epoch));
+        setMetrics((previous) => reuseUnchangedList(previous, [...data.metrics].sort((a, b) => a.epoch - b.epoch)));
         setUpdatedAt(new Date());
         setError("");
       } catch {
@@ -107,7 +110,7 @@ function JobCharts({ apiUrl, ownerId, job }) {
         inFlight = false;
         if (!disposed) {
           setLoading(false);
-          if (active || retry) timer = setTimeout(refresh, POLL_INTERVAL);
+          if (retry) timer = setTimeout(refresh, POLL_INTERVAL);
         }
       }
     }
@@ -129,8 +132,9 @@ function JobCharts({ apiUrl, ownerId, job }) {
       window.removeEventListener("online", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-    // A status change fetches the final epoch even when training has just ended.
-  }, [apiUrl, ownerId, job.id, job.status, active]);
+    // The job endpoint is the clock: fetch history only on a new epoch/status,
+    // on return to the tab, or after an error. Completion always gets a final fetch.
+  }, [apiUrl, ownerId, job.id, job.status, job.current_epoch]);
 
   const emptyMessage = loading
     ? "Loading saved metrics…"
@@ -159,9 +163,9 @@ function JobCharts({ apiUrl, ownerId, job }) {
       </div>
     </>
   );
-}
+});
 
-function MetricChart({ title, metrics, kind, emptyMessage }) {
+const MetricChart = memo(function MetricChart({ title, metrics, kind, emptyMessage }) {
   const accuracy = kind === "accuracy";
   return (
     <article className="training-charts__plot" aria-label={title}>
@@ -223,4 +227,4 @@ function MetricChart({ title, metrics, kind, emptyMessage }) {
       )}
     </article>
   );
-}
+});
