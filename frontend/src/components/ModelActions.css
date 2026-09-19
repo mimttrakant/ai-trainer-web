@@ -1,0 +1,17 @@
+.model-actions { margin-top: 16px; }
+.model-actions__buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.model-actions button {
+  border: 1px solid #454c65;
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: #252b40;
+  color: #e2e6ff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.model-actions button:focus-visible { outline: 2px solid #9da9ff; outline-offset: 2px; }
+.model-actions button:disabled { opacity: 0.45; cursor: default; }
+.model-actions .model-actions__delete { color: #fca5a5; border-color: #794449; background: #38242b; }
+.model-actions__hint { color: #9ba3b5; font-size: 12px; line-height: 1.5; }
+.model-actions__error { color: #fca5a5; font-size: 13px; line-height: 1.5; }

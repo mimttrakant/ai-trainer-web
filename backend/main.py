@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, verify_password
 from database import engine, get_db
+from model_routes import router as model_router
 from dataset_service import (
     apply_scan_result,
     calculate_folder_size,
@@ -61,7 +62,12 @@ def ensure_dataset_scanner_columns() -> None:
 
 ensure_dataset_scanner_columns()
 
+# Additive migration for databases created before model removal was supported.
+with engine.begin() as connection:
+    connection.execute(text("ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
+
 app = FastAPI()
+app.include_router(model_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,6 +75,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -899,6 +906,7 @@ def get_project_model_versions(
         .filter(
             ModelVersion.project_id == project_id,
             ModelVersion.owner_id == owner_id,
+            ModelVersion.deleted_at.is_(None),
         )
         .order_by(
             ModelVersion.version.desc()

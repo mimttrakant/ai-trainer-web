@@ -143,6 +143,9 @@ class ModelVersion(Base):
     download_count = Column(Integer, default=0)
     use_count = Column(Integer, default=0)
 
+    # Recoverable removal; retained rows prevent reusing exported version paths.
+    deleted_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(
         DateTime,

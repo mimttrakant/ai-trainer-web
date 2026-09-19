@@ -1,5 +1,10 @@
 # Training graph checks
 
+`trained-models.spec.js` also verifies PT / ONNX downloads, filenames, deletion
+confirmation/cancellation, retained graphs, disabled formats, failures and mobile
+layout. Its model bytes and API responses are synthetic. See
+`backend/tests/MODEL_ACTIONS.md` for backend checks and soft-delete semantics.
+
 From `frontend/`, run `npm run test:e2e`. The suite uses installed Google Chrome
 in headless mode and starts an isolated Vite server on port 5180. API responses
 are simulated; the tests do not create jobs or write to the database.

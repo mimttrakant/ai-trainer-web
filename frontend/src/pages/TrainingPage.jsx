@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import TrainingCharts from "../components/TrainingCharts";
+import ModelActions from "../components/ModelActions";
 import { isArchivedTrainingJob, visibleTrainingJobs } from "../utils/trainingJobs";
 import { completedJobsSignature, reuseUnchangedList } from "../utils/trainingData";
 
@@ -101,6 +102,12 @@ function TrainingPage() {
       );
     }
   }, [id, ownerId]);
+
+  const removeModelFromList = useCallback((modelId) => {
+    // Ignore any pre-deletion model response that arrives after this update.
+    modelsRequestId.current += 1;
+    setModels((previous) => previous.filter((model) => model.id !== modelId));
+  }, []);
 
   const loadJobs = useCallback(async () => {
     if (!ownerId || !id) return;
@@ -812,10 +819,10 @@ function TrainingPage() {
 
         {/* TRAINED MODELS */}
 
-        <section style={styles.card}>
+        <section style={styles.card} aria-labelledby="trained-models-title">
           <div style={styles.cardHeader}>
             <div>
-              <h2 style={styles.cardTitle}>
+              <h2 style={styles.cardTitle} id="trained-models-title">
                 Trained Models
               </h2>
 
@@ -843,6 +850,7 @@ function TrainingPage() {
               {models.map((model) => (
                 <article
                   key={model.id}
+                  aria-label={model.name || `Model v${model.version}`}
                   style={styles.modelCard}
                 >
                   <div
@@ -939,6 +947,15 @@ function TrainingPage() {
                         : "Not available"}
                     </div>
                   </div>
+
+                  <ModelActions
+                    key={`${ownerId}:${id}:${model.id}`}
+                    apiUrl={API_URL}
+                    ownerId={ownerId}
+                    projectId={id}
+                    model={model}
+                    onDeleted={removeModelFromList}
+                  />
 
                   <div
                     style={styles.tags}
