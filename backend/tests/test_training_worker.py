@@ -277,6 +277,30 @@ class WorkerPostgresTests(unittest.TestCase):
         with patch.object(worker, "EXPORT_LOCK", nullcontext()), patch.object(worker, "export_trained_model", fake_export), ThreadPoolExecutor(2) as pool:
             self.assertEqual(sorted(pool.map(publish, [1, 2])), [1, 2])
 
+    def test_queued_job_trains_submission_snapshot_after_builder_changes(self):
+        self.add_jobs(1)
+        with self.sessions() as db:
+            project = db.get(Project, 1)
+            snapshot = project.architecture_json
+            job = db.get(TrainingJob, 1)
+            job.architecture_json = snapshot
+            job.project_version = 3
+            job.model_name = "Original model"
+            project.architecture_json = "{}"  # Must never be used by this job.
+            project.version = 4
+            project.model_name = "New design"
+            db.commit()
+        self.assertTrue(worker.process_training_job(1))
+        with self.sessions() as db:
+            self.assertEqual(db.get(TrainingJob, 1).status, "completed")
+            model = db.query(ModelVersion).one()
+            self.assertEqual(model.project_version, 3)
+            self.assertEqual(model.name, "Original model")
+            self.assertEqual(model.architecture_json, snapshot)
+            metadata = json.loads((Path(model.pt_path).parent / "metadata.json").read_text())
+            self.assertEqual(metadata["project_version"], 3)
+            self.assertEqual(metadata["model_name"], "Original model")
+
 
 if __name__ == "__main__":
     unittest.main()

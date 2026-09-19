@@ -148,6 +148,7 @@ const JobCharts = memo(function JobCharts({ apiUrl, ownerId, job }) {
           {active ? "Live · refreshes every 3 seconds" : "Saved history"}
         </span>
         <span>Job #{job.id} · {metrics.length} saved epochs</span>
+        {job.project_version && <span>{job.model_name} · Builder Version {job.project_version}</span>}
         {updatedAt && <span>Last updated {updatedAt.toLocaleTimeString()}</span>}
       </div>
       <p className="training-charts__hint">

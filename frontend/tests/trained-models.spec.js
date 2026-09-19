@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 async function setup(page) {
   const state = {
-    models: [{ id: 9, name: "Test model v3", version: 3, pt_path: "/model.pt", onnx_path: "/model.onnx", allow_download: true }],
+    models: [{ id: 9, name: "Test model v3", version: 3, project_version: 2, pt_path: "/model.pt", onnx_path: "/model.onnx", allow_download: true }],
     downloads: [], deletes: 0, failDownload: false, failDelete: false, delay: 0,
   };
   await page.addInitScript(() => localStorage.setItem("user", JSON.stringify({ id: 2, username: "Model test" })));
@@ -64,6 +64,7 @@ test("downloads PT and a complete ONNX archive with server-provided filenames", 
     "/training/projects/1/models/9/download/pt", "/training/projects/1/models/9/download/onnx",
   ]);
   await expect(models(page).getByText(/Extract all files together/)).toBeVisible();
+  await expect(models(page).getByText("Training run 3 · Builder Version 2", { exact: true })).toBeVisible();
 });
 
 test("confirms removal, supports cancel, and retains training graphs after deletion and reload", async ({ page }) => {

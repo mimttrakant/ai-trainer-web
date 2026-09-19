@@ -19,7 +19,10 @@ class ProjectCreate(BaseModel):
 
 
 class ArchitectureUpdate(BaseModel):
-    architecture_json: str
+    architecture_json: str = Field(max_length=2_000_000)
+    owner_id: int = Field(gt=0)
+    model_name: str = Field(min_length=1, max_length=150)
+    expected_version: int = Field(ge=0)
 
 
 class DatasetUrlCreate(BaseModel):

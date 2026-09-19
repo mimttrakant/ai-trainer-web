@@ -25,6 +25,10 @@ const API_URL = "http://127.0.0.1:8000";
 
 function BuilderPage() {
   const { id } = useParams();
+  return <BuilderEditor key={id} id={id} />;
+}
+
+function BuilderEditor({ id }) {
 
   const reactFlowWrapper = useRef(null);
 
@@ -41,6 +45,20 @@ function BuilderPage() {
     useState(null);
 
   const [saveStatus, setSaveStatus] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [version, setVersion] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [savedDesign, setSavedDesign] = useState("");
+  const saveInFlight = useRef(false);
+  const ownerId = JSON.parse(localStorage.getItem("user") || "null")?.id;
+  const design = JSON.stringify({
+    model_name: modelName.trim(),
+    nodes: nodes.map(({ id, type, position, data }) => ({ id, type, position, data })),
+    edges: edges.map(({ id, source, target, sourceHandle, targetHandle }) => ({ id, source, target, sourceHandle, targetHandle })),
+  });
+  const dirty = design !== savedDesign;
 
   const selectedNode =
     nodes.find((node) => node.id === selectedNodeId) ||
@@ -52,51 +70,51 @@ function BuilderPage() {
     );
   };
 
-  const loadArchitecture = useCallback(async () => {
+  const loadArchitecture = useCallback(async (signal) => {
     try {
       const response = await axios.get(
-        `${API_URL}/project/${id}`
+        `${API_URL}/project/${id}`, { signal }
       );
 
       if (!response.data.success) {
-        console.error(response.data.message);
+        setSaveStatus(response.data.message || "Unable to load project.");
         return;
       }
 
-      const architectureJson =
-        response.data.project?.architecture_json;
-
-      if (
-        !architectureJson ||
-        architectureJson === "{}"
-      ) {
+      const project = response.data.project;
+      if (project.owner_id !== ownerId) {
+        setSaveStatus("Project not found or access denied.");
         return;
       }
-
-      const architecture =
-        JSON.parse(architectureJson);
-
-      setNodes(
-        Array.isArray(architecture.nodes)
-          ? architecture.nodes
-          : []
-      );
-
-      setEdges(
-        Array.isArray(architecture.edges)
-          ? architecture.edges
-          : []
-      );
+      const architecture = JSON.parse(project.architecture_json || "{}");
+      const loadedNodes = Array.isArray(architecture.nodes) ? architecture.nodes : [];
+      const loadedEdges = Array.isArray(architecture.edges) ? architecture.edges : [];
+      const name = project.model_name || project.name || "Untitled model";
+      setModelName(name);
+      setVersion(project.version || 0);
+      setNodes(loadedNodes);
+      setEdges(loadedEdges);
+      setSavedDesign(JSON.stringify({
+        model_name: name.trim(),
+        nodes: loadedNodes.map(({ id, type, position, data }) => ({ id, type, position, data })),
+        edges: loadedEdges.map(({ id, source, target, sourceHandle, targetHandle }) => ({ id, source, target, sourceHandle, targetHandle })),
+      }));
+      setLoading(false);
     } catch (error) {
+      if (signal.aborted) return;
+      setSaveStatus("Unable to load project. Reload the page to retry.");
       console.error(
         "Load architecture error:",
         error
       );
     }
-  }, [id, setEdges, setNodes]);
+  }, [id, ownerId, setEdges, setNodes]);
 
   useEffect(() => {
-    loadArchitecture();
+    const controller = new AbortController();
+    const load = async () => { await loadArchitecture(controller.signal); };
+    load();
+    return () => controller.abort();
   }, [loadArchitecture]);
 
   const onConnect = useCallback(
@@ -241,7 +259,7 @@ function BuilderPage() {
       findFreePositionNearCenter(visibleCenter);
 
     const newNode = {
-      id: `${layer.type}-${Date.now()}`,
+      id: `${layer.type}-${crypto.randomUUID()}`,
       type: "default",
       position: newPosition,
 
@@ -307,6 +325,10 @@ function BuilderPage() {
   };
 
   const saveArchitecture = async () => {
+    if (saveInFlight.current || loading || !modelName.trim()) return;
+    saveInFlight.current = true;
+    setSaving(true);
+    const submittedDesign = design;
     try {
       setSaveStatus("Saving...");
 
@@ -318,9 +340,12 @@ function BuilderPage() {
       const response = await axios.put(
         `${API_URL}/projects/${id}/architecture`,
         {
+          owner_id: ownerId,
+          model_name: modelName.trim(),
+          expected_version: version,
           architecture_json:
             JSON.stringify(architecture),
-        }
+        }, { timeout: 15000 }
       );
 
       if (!response.data.success) {
@@ -332,7 +357,9 @@ function BuilderPage() {
         return;
       }
 
-      setSaveStatus("Architecture saved");
+      setVersion(response.data.version);
+      setSavedDesign(submittedDesign);
+      setSaveStatus(`Saved as Builder Version ${response.data.version}`);
     } catch (error) {
       console.error(
         "Save architecture error:",
@@ -340,8 +367,11 @@ function BuilderPage() {
       );
 
       setSaveStatus(
-        "Unable to save architecture"
+        typeof error.response?.data?.detail === "string" ? error.response.data.detail : "Unable to save architecture. Reload to check whether the save completed before retrying."
       );
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
     }
   };
 
@@ -448,11 +478,22 @@ function BuilderPage() {
             Model Builder
           </h1>
 
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <button type="button" disabled={loading || saving} onClick={() => setEditingName((value) => !value)}>Model</button>
+            {editingName ? (
+              <label>Model name <input aria-label="Model name" maxLength={150} value={modelName}
+                disabled={saving} onChange={(event) => setModelName(event.target.value)} /></label>
+            ) : <strong>{modelName || "Loading model…"}</strong>}
+            <span aria-label="Builder version">{version > 0 ? `Builder Version ${version}` : "Not saved yet · first save creates Version 1"}</span>
+            {!loading && dirty && <span>Unsaved changes</span>}
+          </div>
+          <p style={{ fontSize: 13 }}>Each successful save creates a new version. Training uses the latest saved version, not unsaved changes.</p>
+
           <div>
             <button
               type="button"
               onClick={saveArchitecture}
-              disabled={nodes.length === 0}
+              disabled={loading || saving || nodes.length === 0 || !modelName.trim()}
               style={{
                 ...saveButtonStyle,
 
@@ -467,11 +508,11 @@ function BuilderPage() {
                     : "pointer",
               }}
             >
-              Save Architecture
+              {saving ? "Saving…" : "Save Architecture"}
             </button>
 
             {saveStatus && (
-              <span style={saveStatusStyle}>
+              <span role="status" style={saveStatusStyle}>
                 {saveStatus}
               </span>
             )}
@@ -494,6 +535,7 @@ function BuilderPage() {
               <button
                 type="button"
                 key={layer.type}
+                disabled={loading || saving}
                 onClick={() => addLayer(layer)}
                 style={layerButtonStyle}
               >

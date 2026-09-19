@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from database import Base
 
@@ -32,6 +33,21 @@ class Project(Base):
     owner_id = Column(Integer)
     status = Column(String, default="draft")
     architecture_json = Column(String, default="{}")
+    model_name = Column(String, nullable=True)
+    version = Column(Integer, nullable=False, default=0)
+
+
+class ProjectVersion(Base):
+    __tablename__ = "project_versions"
+    __table_args__ = (UniqueConstraint("project_id", "version", name="uq_project_version"),)
+
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    owner_id = Column(Integer, nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    model_name = Column(String, nullable=False)
+    architecture_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Dataset(Base):
@@ -83,6 +99,9 @@ class TrainingJob(Base):
 
     # ใช้เมื่อ Train ต่อจาก Weight เดิม
     source_model_version_id = Column(Integer, nullable=True)
+    project_version = Column(Integer, nullable=True)
+    model_name = Column(String, nullable=True)
+    architecture_json = Column(Text, nullable=True)
 
     # queued / training / completed / failed
     status = Column(String, default="queued")
@@ -123,6 +142,7 @@ class ModelVersion(Base):
     name = Column(String, nullable=False)
     description = Column(Text, default="")
     version = Column(Integer, default=1)
+    project_version = Column(Integer, nullable=True)
 
     pt_path = Column(Text, nullable=True)
     checkpoint_path = Column(Text, nullable=True)

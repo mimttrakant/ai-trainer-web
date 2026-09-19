@@ -195,7 +195,7 @@ def create_model_version(
         training_job_id=job.id,
 
         name=(
-            f"{project.name} v{version}"
+            job.model_name or project.model_name or project.name
         ),
 
         description=(
@@ -204,6 +204,7 @@ def create_model_version(
         ),
 
         version=version,
+        project_version=job.project_version,
 
         pt_path=paths["pt_path"],
         checkpoint_path=(
@@ -321,7 +322,7 @@ def process_training_job(
                 "to this user."
             )
 
-        if not project.architecture_json:
+        if not (job.architecture_json or project.architecture_json):
             raise ValueError(
                 "Project has no architecture."
             )
@@ -332,6 +333,13 @@ def process_training_job(
         # idle connections for the entire training run.
         db.expunge_all()
         db.rollback()
+
+        # New jobs carry an immutable snapshot from submission time. Legacy
+        # jobs without one retain the old behavior, with unknown source version.
+        if job.architecture_json:
+            project.architecture_json = job.architecture_json
+        if job.model_name:
+            project.model_name = job.model_name
 
         # ---------------------------------
         # Dataset
@@ -538,6 +546,8 @@ def publish_model_version(db, job, project, dataset, built, data, result):
         version = get_next_version(db, project.id)
         print(f"[Worker] Job {job.id}: exporting model version {version}")
         paths = export_trained_model(
+            project_version=job.project_version,
+            model_name=job.model_name or project.model_name or project.name,
             model=built.model,
             optimizer=None,
             owner_id=job.owner_id,

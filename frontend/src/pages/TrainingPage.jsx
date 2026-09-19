@@ -273,7 +273,7 @@ function TrainingPage() {
       }
 
       setMessage(
-        `Training Job #${data.job.id} added to queue.`
+        `Training Job #${data.job.id} added to queue.${data.job.project_version ? ` ${data.job.model_name} · Builder Version ${data.job.project_version}.` : ""}`
       );
 
       // Select the newly created job immediately, even if it is still queued.
@@ -674,6 +674,10 @@ function TrainingPage() {
                         <strong>
                           Job #{job.id}
                         </strong>
+                        <div style={styles.muted}>
+                          {job.model_name ? `${job.model_name} · ` : ""}
+                          {job.project_version ? `Builder Version ${job.project_version}` : "Builder version unknown (legacy job)"}
+                        </div>
 
                         <div
                           style={
@@ -866,15 +870,16 @@ function TrainingPage() {
                       >
                         {model.name ||
                           `Model v${model.version}`}
-                      </h3>
+                        </h3>
 
                       <div
                         style={
                           styles.muted
                         }
                       >
-                        Version{" "}
+                        Training run{" "}
                         {model.version}
+                        {" · "}{model.project_version ? `Builder Version ${model.project_version}` : "Builder version unknown (legacy model)"}
                       </div>
                     </div>
 
@@ -883,7 +888,7 @@ function TrainingPage() {
                         styles.versionBadge
                       }
                     >
-                      v{model.version}
+                      Run #{model.version}
                     </span>
                   </div>
 

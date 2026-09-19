@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from auth import hash_password, verify_password
 from database import engine, get_db
 from model_routes import router as model_router
+from project_versioning import migrate_project_versions, save_project_version, snapshot_project
 from dataset_service import (
     apply_scan_result,
     calculate_folder_size,
@@ -38,6 +39,7 @@ from schemas import (
 
 
 Base.metadata.create_all(bind=engine)
+migrate_project_versions(engine)
 
 
 def ensure_dataset_scanner_columns() -> None:
@@ -133,6 +135,8 @@ def serialize_training_job(training_job: TrainingJob) -> dict:
         "dataset_id": training_job.dataset_id,
         "mode": training_job.mode,
         "source_model_version_id": training_job.source_model_version_id,
+        "project_version": training_job.project_version,
+        "model_name": training_job.model_name,
         "status": training_job.status,
 
         "current_epoch": training_job.current_epoch or 0,
@@ -178,6 +182,7 @@ def serialize_model_version(model_version: ModelVersion) -> dict:
         "name": model_version.name,
         "description": model_version.description,
         "version": model_version.version,
+        "project_version": model_version.project_version,
 
         "pt_path": model_version.pt_path,
         "checkpoint_path": model_version.checkpoint_path,
@@ -361,6 +366,8 @@ def create_project(
         owner_id=project.owner_id,
         status="draft",
         architecture_json="{}",
+        model_name=project.name,
+        version=0,
     )
 
     db.add(new_project)
@@ -376,6 +383,8 @@ def create_project(
             "description": new_project.description,
             "owner_id": new_project.owner_id,
             "status": new_project.status,
+            "model_name": new_project.model_name,
+            "version": new_project.version,
         },
     }
 
@@ -423,6 +432,8 @@ def get_project(
             "owner_id": project.owner_id,
             "status": project.status,
             "architecture_json": project.architecture_json,
+            "model_name": project.model_name,
+            "version": project.version,
         },
     }
 
@@ -459,26 +470,7 @@ def update_architecture(
     data: ArchitectureUpdate,
     db: Session = Depends(get_db),
 ):
-    project = (
-        db.query(Project)
-        .filter(Project.id == project_id)
-        .first()
-    )
-
-    if not project:
-        return {
-            "success": False,
-            "message": "Project not found",
-        }
-
-    project.architecture_json = data.architecture_json
-    db.commit()
-    db.refresh(project)
-
-    return {
-        "success": True,
-        "message": "Architecture saved",
-    }
+    return save_project_version(db, project_id, data)
 
 
 @app.post("/datasets/upload")
@@ -736,6 +728,8 @@ def create_training_job(
             Project.id == job.project_id,
             Project.owner_id == job.owner_id,
         )
+        .with_for_update()
+        .populate_existing()
         .first()
     )
 
@@ -815,6 +809,7 @@ def create_training_job(
 
     # 7. สร้าง Training Job
     training_job = TrainingJob(
+        **snapshot_project(project),
         owner_id=job.owner_id,
         project_id=job.project_id,
         dataset_id=job.dataset_id,

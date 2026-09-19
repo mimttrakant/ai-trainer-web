@@ -139,6 +139,8 @@ def save_metadata(
     best_val_accuracy: float,
     best_val_loss: float,
     epoch: int,
+    project_version: int | None = None,
+    model_name: str | None = None,
 ) -> Path:
     folder = get_model_version_folder(
         owner_id=owner_id,
@@ -155,6 +157,8 @@ def save_metadata(
         "owner_id": owner_id,
         "project_id": project_id,
         "version": version,
+        "project_version": project_version,
+        "model_name": model_name,
 
         "task_type": (
             "image_classification"
@@ -276,6 +280,8 @@ def export_trained_model(
     input_channels: int,
     input_height: int,
     input_width: int,
+    project_version: int | None = None,
+    model_name: str | None = None,
 ) -> dict:
     """
     Export Model หลัง Train สำเร็จ
@@ -332,6 +338,8 @@ def export_trained_model(
     )
 
     metadata_path = save_metadata(
+        project_version=project_version,
+        model_name=model_name,
         owner_id=owner_id,
         project_id=project_id,
         version=version,
