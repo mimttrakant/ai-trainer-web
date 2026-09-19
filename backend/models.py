@@ -149,3 +149,49 @@ class ModelVersion(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+
+
+class TrainingMetric(Base):
+    __tablename__ = "training_metrics"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    training_job_id = Column(
+        Integer,
+        nullable=False,
+        index=True,
+    )
+
+    epoch = Column(
+        Integer,
+        nullable=False,
+    )
+
+    train_loss = Column(
+        Float,
+        nullable=True,
+    )
+
+    val_loss = Column(
+        Float,
+        nullable=True,
+    )
+
+    train_accuracy = Column(
+        Float,
+        nullable=True,
+    )
+
+    val_accuracy = Column(
+        Float,
+        nullable=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )

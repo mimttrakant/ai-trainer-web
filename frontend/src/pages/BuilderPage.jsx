@@ -234,15 +234,6 @@ function BuilderPage() {
   };
 
   const addLayer = (layer) => {
-    const layerCount = nodes.filter(
-      (node) =>
-        node.data.layerType === layer.type
-    ).length;
-
-    /*
-      ไม่เอา nodes.length มาคำนวณตำแหน่งอีกแล้ว
-      จึงไม่ไหลลงล่างเรื่อย ๆ
-    */
     const visibleCenter =
       getVisibleCanvasCenter();
 
@@ -255,10 +246,7 @@ function BuilderPage() {
       position: newPosition,
 
       data: {
-        label:
-          layerCount === 0
-            ? layer.type
-            : `${layer.type} ${layerCount + 1}`,
+        label: layer.type,
 
         layerType: layer.type,
 
@@ -338,7 +326,7 @@ function BuilderPage() {
       if (!response.data.success) {
         setSaveStatus(
           response.data.message ||
-            "Save failed"
+          "Save failed"
         );
 
         return;
@@ -442,8 +430,8 @@ function BuilderPage() {
 
   const selectedLayerTemplate = selectedNode
     ? getLayerTemplate(
-        selectedNode.data.layerType
-      )
+      selectedNode.data.layerType
+    )
     : null;
 
   return (
@@ -595,7 +583,7 @@ function BuilderPage() {
                       const propertyValue =
                         selectedNode.data
                           .properties?.[
-                          propertyKey
+                        propertyKey
                         ];
 
                       return renderPropertyField(

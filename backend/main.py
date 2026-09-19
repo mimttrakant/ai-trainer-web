@@ -23,6 +23,7 @@ from models import (
     ModelVersion,
     Project,
     TrainingJob,
+    TrainingMetric,
     User,
 )
 from schemas import (
@@ -156,6 +157,99 @@ def serialize_training_job(training_job: TrainingJob) -> dict:
             if training_job.finished_at
             else None
         ),
+    }
+
+
+def serialize_model_version(model_version: ModelVersion) -> dict:
+    return {
+        "id": model_version.id,
+        "owner_id": model_version.owner_id,
+        "project_id": model_version.project_id,
+        "dataset_id": model_version.dataset_id,
+        "training_job_id": model_version.training_job_id,
+
+        "name": model_version.name,
+        "description": model_version.description,
+        "version": model_version.version,
+
+        "pt_path": model_version.pt_path,
+        "checkpoint_path": model_version.checkpoint_path,
+        "onnx_path": model_version.onnx_path,
+
+        "class_names": parse_class_names(
+            model_version.class_names_json
+        ),
+
+        "class_count": model_version.class_count,
+
+        "best_accuracy": model_version.best_accuracy,
+        "best_loss": model_version.best_loss,
+        "epoch": model_version.epoch,
+
+        "visibility": model_version.visibility,
+        "allow_download": model_version.allow_download,
+
+        "created_at": (
+            model_version.created_at.isoformat()
+            if model_version.created_at
+            else None
+        ),
+    }
+
+
+@app.get("/training/job/{job_id}/metrics")
+def get_training_metrics(
+    job_id: int,
+    owner_id: int,
+    db: Session = Depends(get_db),
+):
+    job = (
+        db.query(TrainingJob)
+        .filter(
+            TrainingJob.id == job_id,
+            TrainingJob.owner_id == owner_id,
+        )
+        .first()
+    )
+
+    if not job:
+        return {
+            "success": False,
+            "message": "Training job not found or access denied",
+        }
+
+    metrics = (
+        db.query(TrainingMetric)
+        .filter(
+            TrainingMetric.training_job_id == job_id
+        )
+        .order_by(
+            TrainingMetric.epoch.asc()
+        )
+        .all()
+    )
+
+    return {
+        "success": True,
+        "job_id": job_id,
+
+        "metrics": [
+            {
+                "epoch": metric.epoch,
+
+                "train_loss": metric.train_loss,
+                "val_loss": metric.val_loss,
+
+                "train_accuracy": (
+                    metric.train_accuracy
+                ),
+
+                "val_accuracy": (
+                    metric.val_accuracy
+                ),
+            }
+            for metric in metrics
+        ],
     }
 
 
@@ -734,6 +828,207 @@ def create_training_job(
         "success": True,
         "message": "Training job created",
         "job": serialize_training_job(training_job),
+    }
+
+
+@app.get("/training/projects/{project_id}/jobs")
+def get_project_training_jobs(
+    project_id: int,
+    owner_id: int,
+    db: Session = Depends(get_db),
+):
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.owner_id == owner_id,
+        )
+        .first()
+    )
+
+    if not project:
+        return {
+            "success": False,
+            "message": "Project not found or access denied",
+        }
+
+    jobs = (
+        db.query(TrainingJob)
+        .filter(
+            TrainingJob.project_id == project_id,
+            TrainingJob.owner_id == owner_id,
+        )
+        .order_by(
+            TrainingJob.created_at.desc()
+        )
+        .all()
+    )
+
+    return {
+        "success": True,
+        "jobs": [
+            serialize_training_job(job)
+            for job in jobs
+        ],
+    }
+
+
+@app.get("/training/projects/{project_id}/models")
+def get_project_model_versions(
+    project_id: int,
+    owner_id: int,
+    db: Session = Depends(get_db),
+):
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.owner_id == owner_id,
+        )
+        .first()
+    )
+
+    if not project:
+        return {
+            "success": False,
+            "message": "Project not found or access denied",
+        }
+
+    models = (
+        db.query(ModelVersion)
+        .filter(
+            ModelVersion.project_id == project_id,
+            ModelVersion.owner_id == owner_id,
+        )
+        .order_by(
+            ModelVersion.version.desc()
+        )
+        .all()
+    )
+
+
+    model_results = []
+
+    for model in models:
+        item = serialize_model_version(model)
+
+        dataset = (
+            db.query(Dataset)
+            .filter(Dataset.id == model.dataset_id)
+            .first()
+        )
+
+        item["dataset_name"] = (
+            dataset.name
+            if dataset
+            else f"Dataset #{model.dataset_id}"
+        )
+
+        model_results.append(item)
+
+    return {
+        "success": True,
+        "models": model_results,
+    }
+
+
+@app.get("/models/{model_id}/lineage")
+def get_model_lineage(
+    model_id: int,
+    owner_id: int,
+    db: Session = Depends(get_db),
+):
+    current_model = (
+        db.query(ModelVersion)
+        .filter(
+            ModelVersion.id == model_id,
+            ModelVersion.owner_id == owner_id,
+        )
+        .first()
+    )
+
+    if not current_model:
+        return {
+            "success": False,
+            "message": "Model version not found or access denied",
+        }
+
+    lineage = []
+    visited_model_ids = set()
+
+    model_version = current_model
+
+    while model_version:
+        if model_version.id in visited_model_ids:
+            break
+
+        visited_model_ids.add(model_version.id)
+
+        job = (
+            db.query(TrainingJob)
+            .filter(
+                TrainingJob.id == model_version.training_job_id
+            )
+            .first()
+        )
+
+        if not job:
+            break
+
+        dataset = (
+            db.query(Dataset)
+            .filter(
+                Dataset.id == job.dataset_id
+            )
+            .first()
+        )
+
+        lineage.append(
+            {
+                "model_version_id": model_version.id,
+                "version": model_version.version,
+                "training_job_id": job.id,
+                "dataset_id": job.dataset_id,
+                "dataset_name": (
+                    dataset.name
+                    if dataset
+                    else f"Dataset #{job.dataset_id}"
+                ),
+                "mode": job.mode,
+                "source_model_version_id": (
+                    job.source_model_version_id
+                ),
+                "best_accuracy": (
+                    model_version.best_accuracy
+                ),
+                "best_loss": (
+                    model_version.best_loss
+                ),
+                "epoch": (
+                    model_version.epoch
+                ),
+            }
+        )
+
+        if not job.source_model_version_id:
+            break
+
+        model_version = (
+            db.query(ModelVersion)
+            .filter(
+                ModelVersion.id
+                == job.source_model_version_id
+            )
+            .first()
+        )
+
+    lineage.reverse()
+
+    return {
+        "success": True,
+        "model_id": current_model.id,
+        "version": current_model.version,
+        "lineage": lineage,
     }
 
 

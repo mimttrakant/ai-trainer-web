@@ -22,6 +22,7 @@ function App() {
         <Route path="/projects/:id/builder" element={<BuilderPage />} />
         <Route path="/projects/:id/training" element={<TrainingPage />} />
         <Route path="/projects/:id/dataset" element={<DatasetPage />} />
+        <Route path="/training" element={<TrainingPage />} />
       </Routes>
     </BrowserRouter>
   );

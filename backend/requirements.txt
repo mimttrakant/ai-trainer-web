@@ -14,3 +14,4 @@ torchvision
 Pillow
 onnx
 onnxruntime
+onnxscript

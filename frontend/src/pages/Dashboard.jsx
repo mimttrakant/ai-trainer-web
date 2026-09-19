@@ -42,7 +42,7 @@ function Dashboard() {
             title="Training"
             description="Select a saved project and dataset, configure training settings, and monitor the results."
             buttonText="Open Training"
-            linkTo="/projects"
+            linkTo="/training"
           />
         </section>
       </main>
