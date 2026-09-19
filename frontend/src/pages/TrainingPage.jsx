@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import TrainingCharts from "../components/TrainingCharts";
 
@@ -7,6 +7,8 @@ const API_URL = "http://localhost:8000";
 
 function TrainingPage() {
   const { id } = useParams();
+  const [, setSearchParams] = useSearchParams();
+  const jobsRequestId = useRef(0);
 
   const user = JSON.parse(localStorage.getItem("user") || "null");
   const ownerId = user?.id;
@@ -66,6 +68,7 @@ function TrainingPage() {
 
   const loadJobs = useCallback(async () => {
     if (!ownerId || !id) return;
+    const requestId = ++jobsRequestId.current;
 
     try {
       const response = await fetch(
@@ -74,7 +77,7 @@ function TrainingPage() {
 
       const data = await response.json();
 
-      if (data.success) {
+      if (data.success && requestId === jobsRequestId.current) {
         setJobs(data.jobs || []);
       }
     } catch (error) {
@@ -228,6 +231,16 @@ function TrainingPage() {
       setMessage(
         `Training Job #${data.job.id} added to queue.`
       );
+
+      // Select the newly created job immediately, even if it is still queued.
+      // Ignore older list requests that could remove it while refreshing.
+      jobsRequestId.current += 1;
+      setJobs((previous) => [data.job, ...previous.filter((job) => job.id !== data.job.id)]);
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous);
+        next.set("job", String(data.job.id));
+        return next;
+      }, { replace: true });
 
       await loadJobs();
 

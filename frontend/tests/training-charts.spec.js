@@ -18,12 +18,22 @@ async function setup(page, status = "completed") {
     metricCalls: 0,
     fail: false,
     delay: 0,
+    createFails: false,
   };
   await page.addInitScript(() => localStorage.setItem("user", JSON.stringify({ id: 2, username: "Chart test" })));
   await page.route("http://localhost:8000/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let payload;
-    if (path.endsWith("/metrics")) {
+    if (path === "/training/jobs" && route.request().method() === "POST") {
+      if (state.createFails) {
+        payload = { success: false, message: "Unable to start training." };
+      } else {
+        const job = { ...state.jobs[0], id: 8, status: "queued", current_epoch: 0 };
+        state.jobs.unshift(job);
+        state.history[8] = [];
+        payload = { success: true, job };
+      }
+    } else if (path.endsWith("/metrics")) {
       state.metricCalls += 1;
       if (state.fail) {
         await route.fulfill({ status: 503, json: { success: false } });
@@ -134,6 +144,37 @@ test("shows an honest empty state for old jobs without recorded epochs", async (
   await page.goto("/projects/1/training");
   await expect(charts(page).getByText("No epoch history was saved for this job.")).toHaveCount(2);
   await expect(charts(page).locator(".recharts-line")).toHaveCount(0);
+});
+
+test("selects the newly created job instead of a saved selection or another running job", async ({ page }) => {
+  const state = await setup(page, "training");
+  await page.goto("/projects/1/training?job=6&view=history");
+  await expectEpochs(page, 1);
+  await page.getByRole("button", { name: "Start Training", exact: true }).click();
+  await expect(charts(page).getByRole("combobox")).toHaveValue("8");
+  await expect(page).toHaveURL(/job=8&view=history/);
+  await expectEpochs(page, 0);
+  await expect(charts(page).getByText("Waiting for the first completed epoch…")).toHaveCount(2);
+  state.jobs[0].status = "training";
+  state.history[8] = [epoch(1)];
+  await expectEpochs(page, 1);
+  await page.reload();
+  await expect(charts(page).getByRole("combobox")).toHaveValue("8");
+  await expectEpochs(page, 1);
+  // Historical selection remains available after starting a new job.
+  await charts(page).getByRole("combobox").selectOption("7");
+  await expectEpochs(page, 2);
+});
+
+test("keeps the selected history when starting a new job fails", async ({ page }) => {
+  const state = await setup(page);
+  state.createFails = true;
+  await page.goto("/projects/1/training?job=6");
+  await expectEpochs(page, 1);
+  await page.getByRole("button", { name: "Start Training", exact: true }).click();
+  await expect(page.getByText("Unable to start training.", { exact: true })).toBeVisible();
+  await expect(charts(page).getByRole("combobox")).toHaveValue("6");
+  await expectEpochs(page, 1);
 });
 
 test("renders both charts on a narrow screen without horizontal overflow", async ({ page }, testInfo) => {
