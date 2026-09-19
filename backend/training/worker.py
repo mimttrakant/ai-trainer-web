@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import argparse
 import json
-import time
+import os
+import signal
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from threading import Event, Lock, current_thread
+
+import torch
 
 from database import SessionLocal
 from models import (
@@ -22,6 +28,9 @@ from training.trainer import EpochMetrics, train_classification_model
 
 
 POLL_INTERVAL_SECONDS = 3
+# Exporters use process-wide PyTorch tracing/compiler state. Keep exports serial
+# while independent models are trained concurrently.
+EXPORT_LOCK = Lock()
 
 
 def get_next_version(
@@ -229,8 +238,18 @@ def create_model_version(
 
 
 def process_training_job(
-    job_id: int,
-) -> None:
+    job_id: int | None = None,
+) -> bool:
+    """Claim and train one queued job; return False when no work is available.
+
+    Each invocation owns its SQLAlchemy sessions, model, optimizer and loaders.
+    Passing an ID still performs the atomic claim, so an already-running or
+    completed job cannot accidentally be trained twice.
+    """
+    job_id = claim_queued_job(job_id)
+    if job_id is None:
+        return False
+
     db = SessionLocal()
 
     try:
@@ -248,7 +267,7 @@ def process_training_job(
             )
 
         print(
-            f"[Worker] Processing job {job.id}"
+            f"[Worker:{current_thread().name}] Processing job {job.id}"
         )
 
         # ---------------------------------
@@ -307,10 +326,12 @@ def process_training_job(
                 "Project has no architecture."
             )
 
-        update_job_started(
-            db,
-            job,
-        )
+        # Retain a snapshot of this job's configuration, but return the database
+        # connection to the pool during training. Epoch callbacks use short,
+        # independent sessions, so many jobs cannot exhaust the pool by holding
+        # idle connections for the entire training run.
+        db.expunge_all()
+        db.rollback()
 
         # ---------------------------------
         # Dataset
@@ -406,78 +427,8 @@ def process_training_job(
         # Model Version
         # ---------------------------------
 
-        version = get_next_version(
-            db,
-            project_id=project.id,
-        )
-
-        print(
-            f"[Worker] Exporting "
-            f"model version {version}"
-        )
-
-        paths = export_trained_model(
-            model=built.model,
-
-            # ตอนนี้ trainer ยังไม่คืน optimizer
-            # รอบ Continue Training
-            # เราจะปรับส่วนนี้อีกครั้ง
-            optimizer=None,
-
-            owner_id=job.owner_id,
-            project_id=job.project_id,
-            training_job_id=job.id,
-
-            version=version,
-
-            epoch=result.best_epoch,
-
-            architecture_json=(
-                project.architecture_json
-            ),
-
-            class_names=(
-                data.class_names
-            ),
-
-            best_val_accuracy=(
-                result.best_val_accuracy
-            ),
-
-            best_val_loss=(
-                result.best_val_loss
-            ),
-
-            input_channels=(
-                built.input_channels
-            ),
-
-            input_height=(
-                built.input_height
-            ),
-
-            input_width=(
-                built.input_width
-            ),
-        )
-
-        model_version = create_model_version(
-            db=db,
-            job=job,
-            project=project,
-            dataset=dataset,
-            version=version,
-            paths=paths,
-            class_names=data.class_names,
-            best_accuracy=(
-                result.best_val_accuracy
-            ),
-            best_loss=(
-                result.best_val_loss
-            ),
-            best_epoch=(
-                result.best_epoch
-            ),
+        paths, model_version = publish_model_version(
+            db, job, project, dataset, built, data, result,
         )
 
         # ---------------------------------
@@ -507,6 +458,7 @@ def process_training_job(
 
         job.finished_at = datetime.utcnow()
 
+        db.add(job)
         db.commit()
 
         print(
@@ -566,72 +518,155 @@ def process_training_job(
     finally:
         db.close()
 
+    return True
 
-def get_next_queued_job_id() -> int | None:
-    db = SessionLocal()
 
-    try:
-        job = (
-            db.query(TrainingJob)
-            .filter(
-                TrainingJob.status == "queued"
-            )
-            .order_by(
-                TrainingJob.created_at.asc()
-            )
+def publish_model_version(db, job, project, dataset, built, data, result):
+    with EXPORT_LOCK:
+        # Serialize version allocation for this project across worker processes
+        # as well as threads. Hold the row lock until create_model_version commits.
+        # Use a scalar query to preserve the architecture snapshot used to train.
+        existing_project = (
+            db.query(Project.id)
+            .filter(Project.id == project.id)
+            .with_for_update()
             .first()
         )
+        if existing_project is None:
+            raise ValueError(f"Project {project.id} was deleted during training.")
 
+        version = get_next_version(db, project.id)
+        print(f"[Worker] Job {job.id}: exporting model version {version}")
+        paths = export_trained_model(
+            model=built.model,
+            optimizer=None,
+            owner_id=job.owner_id,
+            project_id=job.project_id,
+            training_job_id=job.id,
+            version=version,
+            epoch=result.best_epoch,
+            architecture_json=project.architecture_json,
+            class_names=data.class_names,
+            best_val_accuracy=result.best_val_accuracy,
+            best_val_loss=result.best_val_loss,
+            input_channels=built.input_channels,
+            input_height=built.input_height,
+            input_width=built.input_width,
+        )
+        model_version = create_model_version(
+            db=db,
+            job=job,
+            project=project,
+            dataset=dataset,
+            version=version,
+            paths=paths,
+            class_names=data.class_names,
+            best_accuracy=result.best_val_accuracy,
+            best_loss=result.best_val_loss,
+            best_epoch=result.best_epoch,
+        )
+        return paths, model_version
+
+
+def claim_queued_job(job_id: int | None = None) -> int | None:
+    """Atomically reserve a queued job before any training starts (PostgreSQL)."""
+    with SessionLocal() as db:
+        query = (
+            db.query(TrainingJob)
+            .filter(TrainingJob.status == "queued")
+            .order_by(TrainingJob.created_at.asc(), TrainingJob.id.asc())
+            .with_for_update(skip_locked=True)
+        )
+        if job_id is not None:
+            query = query.filter(TrainingJob.id == job_id)
+        job = query.first()
         if job is None:
             return None
-
-        return job.id
-
-    finally:
-        db.close()
+        claimed_id = job.id
+        update_job_started(db, job)
+        return claimed_id
 
 
-def run_worker() -> None:
-    print(
-        "[Worker] Training worker started."
-    )
-
-    print(
-        f"[Worker] Poll interval: "
-        f"{POLL_INTERVAL_SECONDS}s"
-    )
-
-    while True:
+def consume_jobs(stop_event: Event) -> None:
+    while not stop_event.is_set():
         try:
-            job_id = (
-                get_next_queued_job_id()
-            )
-
-            if job_id is None:
-                time.sleep(
-                    POLL_INTERVAL_SECONDS
-                )
-
-                continue
-
-            process_training_job(
-                job_id
-            )
-
-        except KeyboardInterrupt:
-            print(
-                "\n[Worker] Stopped."
-            )
-
-            break
-
+            if not process_training_job():
+                stop_event.wait(POLL_INTERVAL_SECONDS)
         except Exception:
+            # A failed claim/connection must not terminate a consumer thread.
             traceback.print_exc()
+            stop_event.wait(POLL_INTERVAL_SECONDS)
 
-            time.sleep(
-                POLL_INTERVAL_SECONDS
-            )
+
+def positive_int(value) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a positive integer") from None
+    if parsed < 1 or str(parsed) != str(value):
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def run_worker(
+    max_threads: int = 1,
+    torch_threads: int | None = None,
+    stop_event: Event | None = None,
+) -> None:
+    max_threads = positive_int(max_threads)
+    if torch_threads is None:
+        torch_threads = max(1, torch.get_num_threads() // max_threads)
+    torch_threads = positive_int(torch_threads)
+    # Configure native CPU parallelism once, before any model is built.
+    torch.set_num_threads(torch_threads)
+    stop_event = stop_event if stop_event is not None else Event()
+    print(
+        f"[Worker] Started: {max_threads} concurrent job(s), "
+        f"{torch_threads} PyTorch CPU thread(s) per operation, "
+        f"poll interval {POLL_INTERVAL_SECONDS}s."
+    )
+    with ThreadPoolExecutor(
+        max_workers=max_threads,
+        thread_name_prefix="training",
+    ) as executor:
+        futures = [executor.submit(consume_jobs, stop_event) for _ in range(max_threads)]
+        try:
+            while not stop_event.wait(0.5):
+                for future in futures:
+                    if future.done():
+                        future.result()
+                        raise RuntimeError("A training consumer stopped unexpectedly.")
+        except KeyboardInterrupt:
+            print("\n[Worker] Stop requested; finishing active jobs before exit.")
+        finally:
+            # Stop claiming work; executor waits for active jobs to save results.
+            stop_event.set()
+    print("[Worker] Stopped.")
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Train queued jobs with a configurable thread pool.")
+    parser.add_argument(
+        "--threads", type=positive_int,
+        default=os.getenv("TRAINING_WORKER_THREADS", "1"),
+        help="maximum concurrent jobs (env TRAINING_WORKER_THREADS; default: 1)",
+    )
+    parser.add_argument(
+        "--torch-threads", type=positive_int,
+        default=os.getenv("TRAINING_TORCH_THREADS"),
+        help="PyTorch CPU threads per operation (env TRAINING_TORCH_THREADS; default: automatic)",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
-    run_worker()
+    args = parse_args()
+    shutdown = Event()
+
+    def request_shutdown(signum, frame):
+        print(f"[Worker] Signal {signum}: finishing active jobs before exit.")
+        shutdown.set()
+
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
+    run_worker(args.threads, args.torch_threads, shutdown)
