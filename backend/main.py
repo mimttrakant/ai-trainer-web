@@ -134,6 +134,7 @@ def serialize_training_job(training_job: TrainingJob) -> dict:
         "owner_id": training_job.owner_id,
         "project_id": training_job.project_id,
         "dataset_id": training_job.dataset_id,
+        "dataset_name": training_job.dataset_name,
         "mode": training_job.mode,
         "source_model_version_id": training_job.source_model_version_id,
         "project_version": training_job.project_version,
@@ -178,12 +179,14 @@ def serialize_model_version(model_version: ModelVersion) -> dict:
         "owner_id": model_version.owner_id,
         "project_id": model_version.project_id,
         "dataset_id": model_version.dataset_id,
+        "dataset_name": model_version.dataset_name,
         "training_job_id": model_version.training_job_id,
 
         "name": model_version.name,
         "description": model_version.description,
         "version": model_version.version,
         "project_version": model_version.project_version,
+        "has_architecture": bool(model_version.architecture_json and model_version.architecture_json.strip() not in ("", "{}")),
 
         "pt_path": model_version.pt_path,
         "checkpoint_path": model_version.checkpoint_path,
@@ -811,6 +814,7 @@ def create_training_job(
     # 7. สร้าง Training Job
     training_job = TrainingJob(
         **snapshot_project(project, db, job.project_version),
+        dataset_name=dataset.name,
         owner_id=job.owner_id,
         project_id=job.project_id,
         dataset_id=job.dataset_id,
@@ -922,7 +926,7 @@ def get_project_model_versions(
             .first()
         )
 
-        item["dataset_name"] = (
+        item["dataset_name"] = model.dataset_name or (
             dataset.name
             if dataset
             else f"Dataset #{model.dataset_id}"

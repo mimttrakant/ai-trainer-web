@@ -101,6 +101,7 @@ class TrainingJob(Base):
     owner_id = Column(Integer, nullable=False, index=True)
     project_id = Column(Integer, nullable=False, index=True)
     dataset_id = Column(Integer, nullable=False, index=True)
+    dataset_name = Column(String, nullable=True)
 
     # new / continue / finetune
     mode = Column(String, default="new")
@@ -145,6 +146,7 @@ class ModelVersion(Base):
     owner_id = Column(Integer, nullable=False, index=True)
     project_id = Column(Integer, nullable=False, index=True)
     dataset_id = Column(Integer, nullable=False, index=True)
+    dataset_name = Column(String, nullable=True)
     training_job_id = Column(Integer, nullable=False, index=True)
 
     name = Column(String, nullable=False)

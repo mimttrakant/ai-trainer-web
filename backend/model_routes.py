@@ -1,18 +1,20 @@
 """Owner-scoped model downloads and recoverable removal from the model list."""
 
 from datetime import datetime
+import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
 from zipfile import ZIP_STORED, ZipFile
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from database import get_db
 from models import ModelVersion, Project
+from project_versioning import validate_architecture
 
 router = APIRouter()
 STORAGE_ROOT = Path("/app/storage")
@@ -102,18 +104,37 @@ def onnx_download(path, folder, filename):
 
 @router.get("/training/projects/{project_id}/models/{model_id}/download/{file_format}")
 def download_model(
-    project_id: int, model_id: int, file_format: Literal["pt", "onnx"],
+    project_id: int, model_id: int, file_format: Literal["pt", "onnx", "json"],
     owner_id: int, db: Session = Depends(get_db),
 ):
     model = owned_model(db, model_id, owner_id, project_id)
     if model.allow_download is False:
         raise HTTPException(403, "Downloads are disabled for this model.")
+    filename = f"project-{project_id}-model-{model_id}-v{model.version}"
+    if file_format == "json":
+        # Only the actual trained model snapshot, never today's project head.
+        if not model.architecture_json or model.architecture_json.strip() in ("", "{}"):
+            raise HTTPException(404, "No Builder architecture was saved for this model.")
+        try:
+            architecture = validate_architecture(model.architecture_json)
+        except HTTPException as exc:
+            raise HTTPException(409, "The saved Builder architecture cannot be read.") from exc
+        payload = {
+            "format": "ai-trainer-builder", "schema_version": 1,
+            "model_name": model.name, "source_version": model.project_version,
+            "draft": False, "exported_at": datetime.utcnow().isoformat() + "Z",
+            "architecture": architecture,
+            "training": {"model_id": model.id, "training_job_id": model.training_job_id,
+                         "training_run": model.version, "dataset_id": model.dataset_id,
+                         "dataset_name": model.dataset_name},
+        }
+        return Response(json.dumps(payload, ensure_ascii=False, indent=2), media_type="application/json",
+            headers={**DOWNLOAD_HEADERS, "Content-Disposition": f'attachment; filename="{filename}-builder.json"'})
     stored_path = model.pt_path if file_format == "pt" else model.onnx_path
     if not stored_path:
         raise HTTPException(404, "This model format is not available.")
     folder = STORAGE_ROOT / "models" / f"user_{owner_id}" / f"project_{project_id}" / f"version_{model.version}"
     path = checked_file(stored_path, folder)
-    filename = f"project-{project_id}-model-{model_id}-v{model.version}"
     if file_format == "onnx":
         return onnx_download(path, folder, filename)
     return FileResponse(path, media_type="application/octet-stream", filename=f"{filename}.pt", headers=DOWNLOAD_HEADERS)

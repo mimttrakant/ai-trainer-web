@@ -286,6 +286,8 @@ class WorkerPostgresTests(unittest.TestCase):
             job.architecture_json = snapshot
             job.project_version = 3
             job.model_name = "Original model"
+            job.dataset_name = "Dataset at submission"
+            db.get(Dataset, 1).name = "Renamed dataset"
             project.architecture_json = "{}"  # Must never be used by this job.
             project.version = 4
             project.model_name = "New design"
@@ -296,6 +298,7 @@ class WorkerPostgresTests(unittest.TestCase):
             model = db.query(ModelVersion).one()
             self.assertEqual(model.project_version, 3)
             self.assertEqual(model.name, "Original model")
+            self.assertEqual(model.dataset_name, "Dataset at submission")
             self.assertEqual(model.architecture_json, snapshot)
             metadata = json.loads((Path(model.pt_path).parent / "metadata.json").read_text())
             self.assertEqual(metadata["project_version"], 3)

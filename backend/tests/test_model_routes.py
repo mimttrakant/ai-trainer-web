@@ -1,6 +1,7 @@
 """Model API checks use an in-memory database and temporary, synthetic files only."""
 
 from io import BytesIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -30,6 +31,7 @@ class ModelRoutesTests(unittest.TestCase):
         self.pt = self.folder / "model.pt"
         self.pt.write_bytes(b"synthetic PT fixture")
         self.onnx = self.folder / "model.onnx"
+        self.graph = {"nodes": [{"id": "input", "data": {"layerType": "Input", "properties": {}}}], "edges": []}
         graph = helper.make_graph([], "test", [], [])
         onnx.save(helper.make_model(graph), self.onnx)
         patcher = patch.object(model_routes, "STORAGE_ROOT", self.root)
@@ -45,6 +47,7 @@ class ModelRoutesTests(unittest.TestCase):
             db.add(TrainingMetric(training_job_id=4, epoch=1, train_loss=0.5))
             db.add(ModelVersion(id=9, owner_id=2, project_id=1, dataset_id=5,
                                 training_job_id=4, name="Model v3", version=3,
+                                project_version=2, architecture_json=json.dumps(self.graph), dataset_name="Original dataset",
                                 pt_path=str(self.pt), onnx_path=str(self.onnx)))
             db.commit()
 
@@ -159,6 +162,27 @@ class ModelRoutesTests(unittest.TestCase):
             self.assertEqual(db.query(TrainingMetric).count(), 1)
         self.assertTrue(self.pt.is_file())
         self.assertTrue(self.onnx.is_file())
+
+    def test_builder_json_download_uses_trained_snapshot_and_records_provenance(self):
+        with self.session() as db:
+            db.get(Project, 1).architecture_json = '{"nodes": [], "edges": []}'
+            db.commit()
+        response = self.download("json")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/json", response.headers["content-type"])
+        self.assertIn("-builder.json", response.headers["content-disposition"])
+        data = response.json()
+        self.assertEqual(data["format"], "ai-trainer-builder")
+        self.assertEqual(data["architecture"], self.graph)
+        self.assertEqual(data["source_version"], 2)
+        self.assertEqual(data["model_name"], "Model v3")
+        self.assertEqual(data["training"]["dataset_name"], "Original dataset")
+        self.assertNotIn("pt_path", data)
+        self.assertEqual(self.download("json", owner=3).status_code, 404)
+        self.change_model(architecture_json="{}")
+        self.assertEqual(self.download("json").status_code, 404)
+        self.change_model(architecture_json="invalid")
+        self.assertEqual(self.download("json").status_code, 409)
 
 
 if __name__ == "__main__":

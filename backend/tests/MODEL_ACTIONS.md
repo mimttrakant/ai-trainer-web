@@ -6,6 +6,12 @@
   models, or a ZIP containing the graph and every referenced external tensor
   file. Extract the ZIP together before opening the ONNX graph. The current
   exporter produces `model.onnx` plus `model.onnx.data`.
+- GET the same URL with `/download/json` downloads a portable Builder design
+  from `model_versions.architecture_json`, never from the project's current
+  architecture. It includes the originating Builder version, model name and
+  training provenance. Import it through Builder's Import JSON. It contains no
+  trained weights; PT / ONNX downloads provide those separately. Missing legacy
+  architectures return 404 rather than substituting an unrelated current design.
 - DELETE `/training/projects/{project_id}/models/{model_id}?owner_id=...`
   performs a **soft delete**, setting `model_versions.deleted_at`. The listing
   and download endpoints no longer expose that model. Model files, checkpoints,
@@ -38,3 +44,8 @@ npm run test:e2e -- tests/trained-models.spec.js tests/training-charts.spec.js
 ```
 
 The checks do not delete or alter any real models, jobs, datasets, or metrics.
+
+New jobs snapshot the dataset name at submission, and trained models preserve
+that name and dataset ID. The model list displays them even if the dataset is
+renamed or removed later. Legacy models fall back to the currently available
+dataset name or its ID; their historical dataset name was not recorded.

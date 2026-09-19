@@ -706,7 +706,7 @@ function TrainingPage() {
                             styles.muted
                           }
                         >
-                          {getDatasetName(
+                          {job.dataset_name || getDatasetName(
                             job.dataset_id
                           )}
                         </div>
@@ -913,6 +913,10 @@ function TrainingPage() {
                       Run #{model.version}
                     </span>
                   </div>
+
+                  <p style={styles.muted}>
+                    Dataset: {model.dataset_name || getDatasetName(model.dataset_id)} (#{model.dataset_id})
+                  </p>
 
                   <div
                     style={

@@ -10,6 +10,12 @@ confirmation/cancellation, retained graphs, disabled formats, failures and mobil
 layout. Its model bytes and API responses are synthetic. See
 `backend/tests/MODEL_ACTIONS.md` for backend checks and soft-delete semantics.
 
+The workflow checks also cover saved-version dropdowns, training a specifically
+selected revision, advisory concurrent-editor warnings with retained local
+drafts, displayed training datasets, and downloading a trained model's JSON then
+importing it into a new Builder project. Backend tests exercise the actual
+PostgreSQL save lock / unique row IDs and presence expiry in private schemas.
+
 From `frontend/`, run `npm run test:e2e`. The suite uses installed Google Chrome
 in headless mode and starts an isolated Vite server on port 5180. API responses
 are simulated; the tests do not create jobs or write to the database.

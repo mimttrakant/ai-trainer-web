@@ -105,6 +105,7 @@ class ProjectVersioningTests(unittest.TestCase):
         self.assertTrue(result.json()["success"])
         job = result.json()["job"]
         self.assertEqual(job["project_version"], 1)
+        self.assertEqual(job["dataset_name"], "Synthetic")
         new_graph = json.dumps({"nodes": [{"id": "different", "data": {"layerType": "Input"}}], "edges": []})
         self.save(1, "Changed classifier", new_graph)
         with self.sessions() as db:

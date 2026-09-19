@@ -192,6 +192,7 @@ def create_model_version(
         owner_id=job.owner_id,
         project_id=job.project_id,
         dataset_id=job.dataset_id,
+        dataset_name=job.dataset_name or dataset.name,
         training_job_id=job.id,
 
         name=(

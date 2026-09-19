@@ -58,9 +58,9 @@ export default function ModelActions({ apiUrl, ownerId, projectId, model, onDele
   return (
     <div className="model-actions">
       <div className="model-actions__buttons">
-        {[["pt", "PT"], ["onnx", "ONNX"]].map(([format, label]) => (
+        {[["pt", "PT"], ["onnx", "ONNX"], ["json", "JSON"]].map(([format, label]) => (
           <button type="button" key={format}
-            disabled={Boolean(busy) || !model[`${format}_path`] || model.allow_download === false}
+            disabled={Boolean(busy) || (format === "json" ? !model.has_architecture : !model[`${format}_path`]) || model.allow_download === false}
             onClick={() => perform(format)}>
             {busy === format ? `Downloading ${label}…` : `Download ${label}`}
           </button>
@@ -70,6 +70,7 @@ export default function ModelActions({ apiUrl, ownerId, projectId, model, onDele
         </button>
       </div>
       {model.onnx_path && <p className="model-actions__hint">ONNX includes external weights as a ZIP when needed. Extract all files together.</p>}
+      {model.has_architecture && <p className="model-actions__hint">JSON contains the Builder design used for this training run, not trained weights. Load it with Import JSON.</p>}
       {error && <p role="alert" className="model-actions__error">{error}</p>}
     </div>
   );

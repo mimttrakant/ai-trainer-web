@@ -25,6 +25,8 @@ def migrate_project_versions(engine):
         "ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS model_name VARCHAR",
         "ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS architecture_json TEXT",
         "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS project_version INTEGER",
+        "ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS dataset_name VARCHAR",
+        "ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS dataset_name VARCHAR",
         "UPDATE projects SET model_name = COALESCE(NULLIF(name, ''), 'Untitled model') WHERE model_name IS NULL",
         "UPDATE projects SET version = 1 WHERE version = 0 AND architecture_json IS NOT NULL AND TRIM(architecture_json) NOT IN ('', '{}')",
         """INSERT INTO project_versions (project_id, owner_id, version, model_name, architecture_json, created_at)
