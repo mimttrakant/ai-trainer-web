@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Navbar from "../components/Navbar";
+import DatasetGuide from "../components/DatasetGuide";
+import DatasetDetailsDialog from "../components/DatasetDetailsDialog";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -16,6 +18,8 @@ function DatasetPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showUrlModal, setShowUrlModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [detailId, setDetailId] = useState(null);
+  const detailDataset = datasets.find((dataset) => dataset.id === detailId);
   const [uploading, setUploading] = useState(false);
   const [importingUrl, setImportingUrl] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -41,7 +45,10 @@ function DatasetPage() {
     }
   }, [ownerId]);
 
-  useEffect(() => { loadDatasets(); }, [loadDatasets]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(loadDatasets, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadDatasets]);
 
   useEffect(() => {
     const hasProcessing = datasets.some((dataset) => ["uploading", "processing"].includes(dataset.status));
@@ -97,7 +104,7 @@ function DatasetPage() {
       setShowUploadModal(false);
       setUploadForm({ name: "", description: "", file: null });
       if (fileInputRef.current) fileInputRef.current.value = "";
-      setMessage("Dataset uploaded successfully.");
+      setMessage(data.message || "Dataset uploaded successfully.");
       await loadDatasets();
     } catch (error) {
       setMessage(error.message || "Dataset upload failed");
@@ -185,6 +192,8 @@ function DatasetPage() {
           </div>
         </header>
 
+        <DatasetGuide />
+
         {message && (
           <div style={notificationStyle}>
             <span>{message}</span>
@@ -225,18 +234,22 @@ function DatasetPage() {
             </div>
           ) : (
             <div style={datasetGridStyle}>
-              {visibleDatasets.map((dataset) => <DatasetCard key={dataset.id} dataset={dataset} onDelete={() => setDeleteTarget(dataset)} />)}
+              {visibleDatasets.map((dataset) => <DatasetCard key={dataset.id} dataset={dataset} onDetails={() => setDetailId(dataset.id)} onDelete={() => setDeleteTarget(dataset)} />)}
             </div>
           )}
         </section>
       </main>
+
+      {detailDataset && (
+        <DatasetDetailsDialog key={`${ownerId}:${detailDataset.id}:${detailDataset.status}`} dataset={detailDataset} ownerId={ownerId} apiUrl={API_URL} onClose={() => setDetailId(null)} />
+      )}
 
       {showUploadModal && (
         <ModalShell title="Upload ZIP dataset" subtitle="The ZIP file will be extracted and stored in your personal Dataset Library." onClose={() => !uploading && setShowUploadModal(false)}>
           <form onSubmit={uploadZipDataset}>
             <FormField label="Dataset name"><input required value={uploadForm.name} onChange={(event) => setUploadForm((current) => ({ ...current, name: event.target.value }))} placeholder="Example: Cats vs Dogs" style={textInputStyle} /></FormField>
             <FormField label="Description"><textarea value={uploadForm.description} onChange={(event) => setUploadForm((current) => ({ ...current, description: event.target.value }))} placeholder="Optional description" rows={4} style={textAreaStyle} /></FormField>
-            <FormField label="ZIP file"><div style={fileBoxStyle}><input ref={fileInputRef} required type="file" accept=".zip,application/zip" onChange={handleFileSelection} style={{ width: "100%" }} /><small style={helperTextStyle}>Current development version accepts ZIP files.</small></div></FormField>
+            <FormField label="ZIP file"><div style={fileBoxStyle}><input ref={fileInputRef} required type="file" accept=".zip,application/zip" onChange={handleFileSelection} style={{ width: "100%" }} /><small style={helperTextStyle}>ใช้ ZIP ที่ไม่ตั้งรหัสผ่าน แยกภาพอย่างน้อย 2 คลาสเป็นโฟลเดอร์ เช่น apple/ และ banana/ ชื่อโฟลเดอร์คือชื่อคลาส ดูตัวอย่างทั้งหมดในคู่มือด้านบนของ Library</small></div></FormField>
             <ModalActions busy={uploading} busyText="Uploading..." submitText="Upload Dataset" onCancel={() => setShowUploadModal(false)} />
           </form>
         </ModalShell>
@@ -247,7 +260,7 @@ function DatasetPage() {
           <form onSubmit={importDatasetUrl}>
             <FormField label="Dataset name"><input required value={urlForm.name} onChange={(event) => setUrlForm((current) => ({ ...current, name: event.target.value }))} placeholder="Example: Flower Dataset" style={textInputStyle} /></FormField>
             <FormField label="Description"><textarea value={urlForm.description} onChange={(event) => setUrlForm((current) => ({ ...current, description: event.target.value }))} placeholder="Optional description" rows={3} style={textAreaStyle} /></FormField>
-            <FormField label="Dataset URL"><input required type="url" value={urlForm.sourceUrl} onChange={(event) => setUrlForm((current) => ({ ...current, sourceUrl: event.target.value }))} placeholder="https://drive.google.com/file/d/..." style={textInputStyle} /><small style={helperTextStyle}>Google Drive sharing should allow anyone with the link.</small></FormField>
+            <FormField label="Dataset URL"><input required type="url" value={urlForm.sourceUrl} onChange={(event) => setUrlForm((current) => ({ ...current, sourceUrl: event.target.value }))} placeholder="https://drive.google.com/file/d/..." style={textInputStyle} /><small style={helperTextStyle}>ใช้ลิงก์ดาวน์โหลด ZIP โดยตรง หรือ Google Drive ของไฟล์ ZIP ที่แชร์ Anyone with the link ไม่รองรับลิงก์โฟลเดอร์ ภายใน ZIP ต้องแยกภาพตามโฟลเดอร์คลาสเหมือน Upload ZIP</small></FormField>
             <ModalActions busy={importingUrl} busyText="Starting import..." submitText="Import Dataset" onCancel={() => setShowUrlModal(false)} />
           </form>
         </ModalShell>
@@ -266,7 +279,8 @@ function DatasetPage() {
   );
 }
 
-function DatasetCard({ dataset, onDelete }) {
+function DatasetCard({ dataset, onDelete, onDetails }) {
+  const scanned = ["ready", "unsupported"].includes(dataset.status);
   return (
     <article style={datasetCardStyle}>
       <div style={datasetCardTopStyle}>
@@ -275,10 +289,14 @@ function DatasetCard({ dataset, onDelete }) {
       </div>
       <div><h3 style={datasetNameStyle}>{dataset.name}</h3><p style={datasetDescriptionStyle}>{dataset.description || "No description provided."}</p></div>
       <div style={metadataGridStyle}>
+        <MetadataItem label="Classes / คลาส" value={scanned ? dataset.class_count ?? "—" : "รอสแกน"} />
+        <MetadataItem label="Images / ภาพ" value={scanned ? dataset.image_count ?? "—" : "—"} />
         <MetadataItem label="Size" value={formatBytes(dataset.size_bytes)} />
         <MetadataItem label="Created" value={formatDate(dataset.created_at)} />
       </div>
       {dataset.status === "failed" && dataset.error_message && <div style={errorBoxStyle}>{dataset.error_message}</div>}
+      {dataset.status === "unsupported" && dataset.unsupported_reason && <div style={errorBoxStyle}>{dataset.unsupported_reason}</div>}
+      <button type="button" onClick={onDetails} aria-label={`ดูรายละเอียด ${dataset.name}`} style={secondaryButtonStyle}><span aria-hidden="true">🔍</span> ดูข้อมูลคลาสและภาพ</button>
       <button type="button" onClick={onDelete} style={deleteButtonStyle}>Delete</button>
     </article>
   );
@@ -292,6 +310,7 @@ function StatusBadge({ status }) {
     processing: { label: "Processing", background: "rgba(89, 156, 255, 0.14)", color: "#7db1ff", border: "rgba(125, 177, 255, 0.28)" },
     uploading: { label: "Uploading", background: "rgba(255, 192, 74, 0.14)", color: "#ffc867", border: "rgba(255, 200, 103, 0.28)" },
     failed: { label: "Failed", background: "rgba(255, 88, 111, 0.14)", color: "#ff7e90", border: "rgba(255, 126, 144, 0.28)" },
+    unsupported: { label: "Unsupported", background: "rgba(255, 192, 74, 0.14)", color: "#ffc867", border: "rgba(255, 200, 103, 0.28)" },
   };
   const selected = statusMap[status] || { label: status || "Unknown", background: "rgba(255,255,255,0.08)", color: "#c7ccda", border: "rgba(255,255,255,0.15)" };
   return <span style={{ ...statusBadgeStyle, background: selected.background, color: selected.color, borderColor: selected.border }}><span style={statusDotStyle}>●</span>{selected.label}</span>;
@@ -328,7 +347,7 @@ const notificationCloseStyle = { border: 0, background: "transparent", color: "#
 const sectionHeadingStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", marginBottom: "18px" };
 const sectionTitleStyle = { margin: 0, fontSize: "23px" };
 const sectionSubtitleStyle = { margin: "5px 0 0", color: "#929aac", fontSize: "14px" };
-const datasetGridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: "18px" };
+const datasetGridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(290px, 100%), 1fr))", gap: "18px" };
 const datasetCardStyle = { display: "flex", flexDirection: "column", gap: "20px", minHeight: "340px", padding: "22px", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "19px", background: "rgba(22, 25, 34, 0.88)", boxShadow: "0 18px 54px rgba(0,0,0,0.16)" };
 const datasetCardTopStyle = { display: "flex", justifyContent: "space-between", alignItems: "center" };
 const datasetIconStyle = { width: "50px", height: "50px", display: "grid", placeItems: "center", border: "1px solid rgba(141, 151, 255, 0.25)", borderRadius: "14px", background: "rgba(91, 101, 223, 0.13)", color: "#aeb6ff", fontSize: "13px", fontWeight: "900" };

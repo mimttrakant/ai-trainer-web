@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, verify_password
 from database import engine, get_db
+from dataset_details import router as dataset_details_router
 from model_routes import router as model_router
 from project_versioning import migrate_project_versions, save_project_version, snapshot_project, router as project_version_router
 from dataset_service import (
@@ -52,6 +53,7 @@ def ensure_dataset_scanner_columns() -> None:
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS image_count INTEGER DEFAULT 0",
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS class_count INTEGER DEFAULT 0",
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS class_names_json TEXT DEFAULT '[]'",
+        "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS class_counts_json TEXT",
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS supported BOOLEAN DEFAULT FALSE",
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS unsupported_reason TEXT",
         "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS split_type VARCHAR",
@@ -70,6 +72,7 @@ with engine.begin() as connection:
 
 app = FastAPI()
 app.include_router(model_router)
+app.include_router(dataset_details_router)
 app.include_router(project_version_router)
 
 app.add_middleware(

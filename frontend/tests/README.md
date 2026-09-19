@@ -1,5 +1,11 @@
 # Training graph checks
 
+`dataset-library.spec.js` checks the Thai preparation/import guide, class/image
+summaries, on-demand details, per-split counts, class search and pagination,
+processing/unsupported/error states, retries, keyboard focus and mobile bounds.
+All API responses are mocked; these tests never upload or delete real datasets.
+See `backend/tests/DATASET_DETAILS.md` for the count/cache contract and API tests.
+
 `builder-versioning.spec.js` covers model names, per-save version increments,
 reload, failed/concurrent-tab saves, draft JSON export, import into a different
 project, legacy JSON, replacement confirmation, and invalid/oversized files.

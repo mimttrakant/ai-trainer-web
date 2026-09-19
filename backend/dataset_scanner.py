@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
@@ -52,6 +52,7 @@ class DatasetScanResult:
     supported: bool
     unsupported_reason: str | None
     split_type: str
+    class_counts: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -234,6 +235,15 @@ def scan_split_dataset(
     class_folders = class_folders_from_root(preferred_split)
     class_names = [folder.name for folder in class_folders]
 
+    counts = {}
+    for split_name, split_folder in split_folders.items():
+        for folder in class_folders_from_root(split_folder):
+            row = counts.setdefault(folder.name, {"name": folder.name, "image_count": 0, "splits": {}})
+            amount = count_images(folder)
+            row["image_count"] += amount
+            row["splits"][split_name] = amount
+    class_counts = sorted(counts.values(), key=lambda row: row["name"].lower())
+
     image_count = sum(
         count_images(folder)
         for folder in split_folders.values()
@@ -251,6 +261,7 @@ def scan_split_dataset(
                 "but at least 2 class folders are required."
             ),
             split_type="pre_split",
+            class_counts=class_counts,
         )
 
     # ตรวจว่าคลาสใน split อื่น ๆ สอดคล้องกันหรือไม่
@@ -278,6 +289,7 @@ def scan_split_dataset(
                 + ", ".join(sorted(inconsistent_splits))
             ),
             split_type="pre_split",
+            class_counts=class_counts,
         )
 
     return DatasetScanResult(
@@ -288,13 +300,15 @@ def scan_split_dataset(
         supported=True,
         unsupported_reason=None,
         split_type="pre_split",
+        class_counts=class_counts,
     )
 
 
 def scan_folder_classification(class_root: Path) -> DatasetScanResult:
     class_folders = class_folders_from_root(class_root)
     class_names = [folder.name for folder in class_folders]
-    image_count = sum(count_images(folder) for folder in class_folders)
+    class_counts = [{"name": folder.name, "image_count": count_images(folder), "splits": {}} for folder in class_folders]
+    image_count = sum(row["image_count"] for row in class_counts)
 
     return DatasetScanResult(
         dataset_format="folder_classification",
@@ -304,6 +318,7 @@ def scan_folder_classification(class_root: Path) -> DatasetScanResult:
         supported=True,
         unsupported_reason=None,
         split_type="auto_split",
+        class_counts=class_counts,
     )
 
 

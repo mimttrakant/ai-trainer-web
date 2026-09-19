@@ -152,6 +152,7 @@ def apply_scan_result(dataset: Dataset, extract_path: Path) -> None:
         scan_result.class_names,
         ensure_ascii=False,
     )
+    dataset.class_counts_json = json.dumps(scan_result.class_counts, ensure_ascii=False)
     dataset.supported = scan_result.supported
     dataset.unsupported_reason = scan_result.unsupported_reason
     dataset.split_type = scan_result.split_type

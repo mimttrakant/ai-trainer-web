@@ -81,6 +81,7 @@ class Dataset(Base):
     image_count = Column(Integer, default=0)
     class_count = Column(Integer, default=0)
     class_names_json = Column(Text, default="[]")
+    class_counts_json = Column(Text, nullable=True)
     supported = Column(Boolean, default=False)
     unsupported_reason = Column(Text, nullable=True)
     split_type = Column(String, nullable=True)
