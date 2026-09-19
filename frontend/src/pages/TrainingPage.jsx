@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import TrainingCharts from "../components/TrainingCharts";
+import { isArchivedTrainingJob, visibleTrainingJobs } from "../utils/trainingJobs";
 
 const API_URL = "http://localhost:8000";
+const JOBS_PER_PAGE = 5;
 
 function TrainingPage() {
   const { id } = useParams();
@@ -16,6 +18,16 @@ function TrainingPage() {
   const [datasets, setDatasets] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [models, setModels] = useState([]);
+  const [showJobHistory, setShowJobHistory] = useState(false);
+  const [jobPage, setJobPage] = useState(1);
+  const [jobsNow, setJobsNow] = useState(() => Date.now());
+
+  const archivedJobCount = jobs.filter((job) => isArchivedTrainingJob(job, jobsNow)).length;
+  const visibleJobs = visibleTrainingJobs(jobs, showJobHistory, jobsNow);
+  const jobPageCount = Math.max(1, Math.ceil(visibleJobs.length / JOBS_PER_PAGE));
+  const currentJobPage = Math.min(jobPage, jobPageCount);
+  const jobPageStart = (currentJobPage - 1) * JOBS_PER_PAGE;
+  const pagedJobs = visibleJobs.slice(jobPageStart, jobPageStart + JOBS_PER_PAGE);
 
   const [datasetId, setDatasetId] = useState("");
   const [epochs, setEpochs] = useState(10);
@@ -79,6 +91,7 @@ function TrainingPage() {
 
       if (data.success && requestId === jobsRequestId.current) {
         setJobs(data.jobs || []);
+        setJobsNow(Date.now());
       }
     } catch (error) {
       console.error(
@@ -236,6 +249,9 @@ function TrainingPage() {
       // Ignore older list requests that could remove it while refreshing.
       jobsRequestId.current += 1;
       setJobs((previous) => [data.job, ...previous.filter((job) => job.id !== data.job.id)]);
+      setShowJobHistory(false);
+      setJobPage(1);
+      setJobsNow(Date.now());
       setSearchParams((previous) => {
         const next = new URLSearchParams(previous);
         next.set("job", String(data.job.id));
@@ -547,17 +563,16 @@ function TrainingPage() {
 
         {/* TRAINING JOBS */}
 
-        <section style={styles.card}>
+        <section style={styles.card} aria-labelledby="training-jobs-title">
           <div style={styles.cardHeader}>
             <div>
-              <h2 style={styles.cardTitle}>
+              <h2 id="training-jobs-title" style={styles.cardTitle}>
                 Training Jobs
               </h2>
 
               <p style={styles.cardDescription}>
-                Progress refreshes
-                automatically every
-                3 seconds.
+                Progress refreshes every 3 seconds. Completed jobs older than
+                2 days are hidden from Recent jobs. Their history and graphs are kept.
               </p>
             </div>
 
@@ -569,15 +584,39 @@ function TrainingPage() {
             </button>
           </div>
 
+          <div style={styles.jobToolbar} role="group" aria-label="Training job history filter">
+            <button
+              type="button"
+              aria-pressed={!showJobHistory}
+              style={{ ...styles.secondaryButton, ...(!showJobHistory ? styles.selectedJobFilter : {}) }}
+              onClick={() => { setShowJobHistory(false); setJobPage(1); }}
+            >
+              Recent jobs ({jobs.length - archivedJobCount})
+            </button>
+            <button
+              type="button"
+              aria-pressed={showJobHistory}
+              style={{ ...styles.secondaryButton, ...(showJobHistory ? styles.selectedJobFilter : {}) }}
+              onClick={() => { setShowJobHistory(true); setJobPage(1); }}
+            >
+              All history ({jobs.length})
+            </button>
+            {archivedJobCount > 0 && !showJobHistory && (
+              <span style={styles.muted}>{archivedJobCount} older completed jobs hidden</span>
+            )}
+          </div>
+
           {loading ? (
             <p>Loading...</p>
-          ) : jobs.length === 0 ? (
+          ) : visibleJobs.length === 0 ? (
             <div style={styles.empty}>
-              No training jobs yet.
+              {jobs.length === 0
+                ? "No training jobs yet."
+                : "No active or recent jobs. Choose All history to view older completed jobs."}
             </div>
           ) : (
             <div style={styles.jobList}>
-              {jobs.map((job) => {
+              {pagedJobs.map((job) => {
                 const progress =
                   job.total_epochs > 0
                     ? Math.min(
@@ -716,6 +755,32 @@ function TrainingPage() {
                 );
               })}
             </div>
+          )}
+          {!loading && visibleJobs.length > 0 && (
+            <nav style={styles.jobPagination} aria-label="Training job pages">
+              <span style={styles.muted}>
+                Showing {jobPageStart + 1}–{jobPageStart + pagedJobs.length} of {visibleJobs.length} jobs
+              </span>
+              <div style={styles.jobToolbar}>
+                <button
+                  type="button"
+                  disabled={currentJobPage === 1}
+                  style={{ ...styles.secondaryButton, opacity: currentJobPage === 1 ? 0.45 : 1 }}
+                  onClick={() => setJobPage(currentJobPage - 1)}
+                >
+                  Previous
+                </button>
+                <span style={styles.muted}>Page {currentJobPage} of {jobPageCount}</span>
+                <button
+                  type="button"
+                  disabled={currentJobPage === jobPageCount}
+                  style={{ ...styles.secondaryButton, opacity: currentJobPage === jobPageCount ? 0.45 : 1 }}
+                  onClick={() => setJobPage(currentJobPage + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </nav>
           )}
         </section>
 
@@ -1046,6 +1111,29 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: "14px",
+  },
+
+  jobToolbar: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "10px",
+    marginBottom: "16px",
+  },
+
+  selectedJobFilter: {
+    background: "rgba(107, 116, 247, 0.24)",
+    border: "1px solid #8b94ff",
+    color: "#eef0ff",
+  },
+
+  jobPagination: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    marginTop: "20px",
   },
 
   job: {

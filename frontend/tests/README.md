@@ -10,6 +10,11 @@ completion, connection recovery, switching jobs during a request, missing histor
 and the mobile layout. Screenshots and failure traces are written to the ignored
 `test-results/` directory.
 
+Job-list checks also cover the 48-hour completion cutoff in the Asia/Bangkok
+timezone, preserving historical graphs, five-job pagination, keeping active jobs
+first, and returning to the first page after starting a new job. The retention
+rule only hides older completed jobs in the default view; it deletes no data.
+
 The optional live test reads an existing job from the app on `localhost:5173`
 and its API on `localhost:8000`. Supply the IDs of a job with saved metrics:
 

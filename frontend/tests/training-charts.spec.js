@@ -40,7 +40,7 @@ async function setup(page, status = "completed") {
         return;
       }
       const jobId = path.split("/")[3];
-      payload = { success: true, job_id: Number(jobId), metrics: [...state.history[jobId]] };
+      payload = { success: true, job_id: Number(jobId), metrics: [...(state.history[jobId] || [])] };
       if (state.delay) await new Promise((resolve) => setTimeout(resolve, state.delay));
     } else if (path.endsWith("/jobs")) {
       payload = { success: true, jobs: state.jobs };
@@ -188,4 +188,95 @@ test("renders both charts on a narrow screen without horizontal overflow", async
   expect(loss.x + loss.width).toBeLessThanOrEqual(390);
   expect(accuracy.x + accuracy.width).toBeLessThanOrEqual(390);
   await charts(page).screenshot({ path: testInfo.outputPath("training-charts-mobile.png") });
+});
+
+test.describe("training job history visibility", () => {
+  test.use({ timezoneId: "Asia/Bangkok" });
+
+  const jobList = (page) => page.getByRole("region", { name: "Training Jobs", exact: true });
+  const now = new Date("2026-09-19T12:00:00Z");
+
+  test("hides only completed jobs older than 48 hours and retains their graphs", async ({ page }) => {
+    const consoleErrors = [];
+    page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+    const state = await setup(page);
+    const base = state.jobs[0];
+    state.jobs = [
+      { ...base, id: 12, finished_at: "2026-09-17T11:59:59" },
+      { ...base, id: 11, finished_at: "2026-09-17T12:00:00" },
+      { ...base, id: 10, finished_at: "2026-09-19T10:00:00+07:00" },
+      { ...base, id: 9, status: "training", finished_at: "2026-09-01T00:00:00" },
+      { ...base, id: 8, status: "failed", finished_at: "2026-09-01T00:00:00" },
+    ];
+    state.history[12] = [epoch(1), epoch(2)];
+    await page.clock.setFixedTime(now);
+    await page.goto("/projects/1/training");
+    const list = jobList(page);
+    await expect(list.getByRole("article")).toHaveCount(4);
+    await expect(list.getByText("Job #12", { exact: true })).toHaveCount(0);
+    for (const id of [11, 10, 9, 8]) {
+      await expect(list.getByText(`Job #${id}`, { exact: true })).toBeVisible();
+    }
+    await expect(list.getByRole("article").first()).toContainText("Job #9");
+    await list.getByRole("button", { name: "All history (5)", exact: true }).click();
+    await expect(list.getByRole("article")).toHaveCount(5);
+    await expect(list.getByText("Job #12", { exact: true })).toBeVisible();
+    await charts(page).getByRole("combobox").selectOption("12");
+    await expectEpochs(page, 2);
+    await list.getByRole("button", { name: "Recent jobs (4)", exact: true }).click();
+    await expect(list.getByText("Job #12", { exact: true })).toHaveCount(0);
+    await expectEpochs(page, 2);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("updates the 48-hour cutoff while the page stays open and explains an empty recent list", async ({ page }) => {
+    const state = await setup(page);
+    state.jobs = [{ ...state.jobs[0], finished_at: "2026-09-17T12:00:01" }];
+    await page.clock.setFixedTime(now);
+    await page.goto("/projects/1/training");
+    const list = jobList(page);
+    await expect(list.getByRole("article")).toHaveCount(1);
+    await page.clock.setFixedTime(new Date("2026-09-19T12:00:02Z"));
+    await expect(list.getByRole("article")).toHaveCount(0);
+    await expect(list.getByText("No active or recent jobs. Choose All history to view older completed jobs.")).toBeVisible();
+    await list.getByRole("button", { name: "All history (1)", exact: true }).click();
+    await expect(list.getByRole("article")).toHaveCount(1);
+    await expectEpochs(page, 2);
+  });
+
+  test("paginates five jobs at a time and returns to the first page for a new training job", async ({ page }) => {
+    const state = await setup(page);
+    state.jobs = Array.from({ length: 9 }, (_, index) => ({ ...state.jobs[0], id: 20 - index }));
+    await page.goto("/projects/1/training");
+    const list = jobList(page);
+    await expect(list.getByRole("article")).toHaveCount(5);
+    await expect(list.getByText("Showing 1–5 of 9 jobs")).toBeVisible();
+    await expect(list.getByRole("button", { name: "Previous", exact: true })).toBeDisabled();
+    await list.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(list.getByRole("article")).toHaveCount(4);
+    await expect(list.getByText("Showing 6–9 of 9 jobs")).toBeVisible();
+    await expect(list.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Start Training", exact: true }).click();
+    await expect(list.getByText("Page 1 of 2", { exact: true })).toBeVisible();
+    await expect(list.getByRole("article").first()).toContainText("Job #8");
+    await expect(list.getByRole("article")).toHaveCount(5);
+    await expect(charts(page).getByRole("combobox")).toHaveValue("8");
+  });
+
+  test("clamps pagination when a refresh removes the last page and keeps unknown completion dates visible", async ({ page }) => {
+    const state = await setup(page);
+    state.jobs = Array.from({ length: 6 }, (_, index) => ({
+      ...state.jobs[0], id: 20 - index, finished_at: index === 0 ? "invalid date" : null,
+    }));
+    await page.goto("/projects/1/training");
+    const list = jobList(page);
+    await expect(list.getByRole("article")).toHaveCount(5);
+    await list.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(list.getByRole("article")).toHaveCount(1);
+    state.jobs = state.jobs.slice(0, 3);
+    await list.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(list.getByRole("article")).toHaveCount(3);
+    await expect(list.getByText("Page 1 of 1", { exact: true })).toBeVisible();
+    await expect(list.getByText("Job #20", { exact: true })).toBeVisible();
+  });
 });
