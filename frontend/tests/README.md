@@ -15,6 +15,15 @@ timezone, preserving historical graphs, five-job pagination, keeping active jobs
 first, and returning to the first page after starting a new job. The retention
 rule only hides older completed jobs in the default view; it deletes no data.
 
+The graph job picker suggests matches as the user types, ignoring case, spaces
+and `#` (for example `j`, `job#`, `Job #7`, `7`, dataset names or statuses).
+It initially shows up to ten jobs, with active jobs first. Searching covers all
+history, and both search results and View all history use ten-result pages in a
+height-limited popup. Tests cover keyboard/mouse selection, dismissal, exact-ID
+ranking, no matches, older history, mobile bounds, and no chart redraws or metric
+requests while typing. Search uses the already-loaded job list; it does not add
+per-keystroke API requests or delete history.
+
 Refresh-performance checks verify 3-second polling while jobs are active and
 30-second polling when idle, with an immediate refresh on return to the tab.
 They also verify that unchanged charts have no DOM mutations, metrics are fetched

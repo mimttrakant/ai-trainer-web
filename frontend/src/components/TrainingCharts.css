@@ -21,31 +21,6 @@
 .training-charts__hint { color: #9ba3b5; line-height: 1.6; font-size: 14px; }
 .training-charts__header p { margin: 7px 0 0; }
 
-.training-charts__selector {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: #c7cbe0;
-  max-width: 100%;
-}
-
-.training-charts__selector select {
-  background: #181b24;
-  color: #f4f6fb;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
-  padding: 10px 12px;
-  width: 340px;
-  max-width: 100%;
-}
-
-.training-charts__selector select:focus-visible {
-  outline: 2px solid #9da9ff;
-  outline-offset: 3px;
-}
-
 .training-charts__summary {
   display: flex;
   align-items: center;
@@ -83,5 +58,4 @@
 
 @media (max-width: 480px) {
   .training-charts { padding: 18px 12px; }
-  .training-charts__selector, .training-charts__selector select { width: 100%; }
 }

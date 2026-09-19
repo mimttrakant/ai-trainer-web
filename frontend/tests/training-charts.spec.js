@@ -68,6 +68,11 @@ function charts(page) {
   return page.getByRole("region", { name: "Training Graphs" });
 }
 
+async function selectJob(page, id) {
+  await charts(page).getByRole("combobox").fill(`job#${id}`);
+  await charts(page).getByRole("option", { name: new RegExp(`^Job #${id} ·`) }).click();
+}
+
 async function expectEpochs(page, count) {
   await expect(charts(page).getByText(new RegExp(`· ${count} saved epochs$`))).toBeVisible();
   if (count > 0) {
@@ -84,7 +89,7 @@ test("loads saved history, restores it after reload, navigation and reopening a 
   await expectEpochs(page, 2);
   await expect(charts(page).getByText("Saved history", { exact: true })).toBeVisible();
   await expect(page.getByRole("article", { name: "Accuracy Graph" }).getByText("100%", { exact: true })).toBeVisible();
-  await charts(page).getByRole("combobox").selectOption("6");
+  await selectJob(page, 6);
   await expectEpochs(page, 1);
   await expect(page).toHaveURL(/job=6/);
   await page.reload();
@@ -147,11 +152,11 @@ test("does not show a late response from the previous selected job", async ({ pa
   await page.goto("/projects/1/training?job=7");
   await expect.poll(() => state.metricCalls).toBeGreaterThan(0);
   state.delay = 0;
-  await charts(page).getByRole("combobox").selectOption("6");
+  await selectJob(page, 6);
   await expectEpochs(page, 1);
   await page.waitForTimeout(1800);
   await expectEpochs(page, 1);
-  await expect(charts(page).getByRole("combobox")).toHaveValue("6");
+  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #6 ·/);
 });
 
 test("shows an honest empty state for old jobs without recorded epochs", async ({ page }) => {
@@ -167,7 +172,7 @@ test("selects the newly created job instead of a saved selection or another runn
   await page.goto("/projects/1/training?job=6&view=history");
   await expectEpochs(page, 1);
   await page.getByRole("button", { name: "Start Training", exact: true }).click();
-  await expect(charts(page).getByRole("combobox")).toHaveValue("8");
+  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #8 ·/);
   await expect(page).toHaveURL(/job=8&view=history/);
   await expectEpochs(page, 0);
   await expect(charts(page).getByText("Waiting for the first completed epoch…")).toHaveCount(2);
@@ -176,10 +181,10 @@ test("selects the newly created job instead of a saved selection or another runn
   state.history[8] = [epoch(1)];
   await expectEpochs(page, 1);
   await page.reload();
-  await expect(charts(page).getByRole("combobox")).toHaveValue("8");
+  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #8 ·/);
   await expectEpochs(page, 1);
   // Historical selection remains available after starting a new job.
-  await charts(page).getByRole("combobox").selectOption("7");
+  await selectJob(page, 7);
   await expectEpochs(page, 2);
 });
 
@@ -190,7 +195,7 @@ test("keeps the selected history when starting a new job fails", async ({ page }
   await expectEpochs(page, 1);
   await page.getByRole("button", { name: "Start Training", exact: true }).click();
   await expect(page.getByText("Unable to start training.", { exact: true })).toBeVisible();
-  await expect(charts(page).getByRole("combobox")).toHaveValue("6");
+  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #6 ·/);
   await expectEpochs(page, 1);
 });
 
@@ -238,7 +243,7 @@ test.describe("training job history visibility", () => {
     await list.getByRole("button", { name: "All history (5)", exact: true }).click();
     await expect(list.getByRole("article")).toHaveCount(5);
     await expect(list.getByText("Job #12", { exact: true })).toBeVisible();
-    await charts(page).getByRole("combobox").selectOption("12");
+    await selectJob(page, 12);
     await expectEpochs(page, 2);
     await list.getByRole("button", { name: "Recent jobs (4)", exact: true }).click();
     await expect(list.getByText("Job #12", { exact: true })).toHaveCount(0);
@@ -278,7 +283,7 @@ test.describe("training job history visibility", () => {
     await expect(list.getByText("Page 1 of 2", { exact: true })).toBeVisible();
     await expect(list.getByRole("article").first()).toContainText("Job #8");
     await expect(list.getByRole("article")).toHaveCount(5);
-    await expect(charts(page).getByRole("combobox")).toHaveValue("8");
+    await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #8 ·/);
   });
 
   test("clamps pagination when a refresh removes the last page and keeps unknown completion dates visible", async ({ page }) => {
@@ -296,6 +301,110 @@ test.describe("training job history visibility", () => {
     await expect(list.getByRole("article")).toHaveCount(3);
     await expect(list.getByText("Page 1 of 1", { exact: true })).toBeVisible();
     await expect(list.getByText("Job #20", { exact: true })).toBeVisible();
+  });
+});
+
+test.describe("searchable training job picker", () => {
+  test("suggests partial IDs, names and statuses without redrawing graphs or fetching metrics", async ({ page }) => {
+    const state = await setup(page);
+    state.jobs.push({ ...state.jobs[0], id: 17, status: "failed" });
+    await page.goto("/projects/1/training?job=7");
+    await expectEpochs(page, 2);
+    const metrics = state.metricCalls;
+    await page.evaluate(() => {
+      window.chartChanges = 0;
+      const observer = new MutationObserver(records => { window.chartChanges += records.length; });
+      document.querySelectorAll('.training-charts__plot').forEach(plot =>
+        observer.observe(plot, { attributes: true, childList: true, subtree: true, characterData: true }));
+    });
+    const input = charts(page).getByRole("combobox", { name: "Training job", exact: true });
+    for (const query of ["j", "job#", "JOB #", "test im"]) {
+      await input.fill(query);
+      await expect(charts(page).getByRole("option")).toHaveCount(3);
+    }
+    await input.fill("7");
+    await expect(charts(page).getByRole("option")).toHaveCount(2);
+    await expect(charts(page).getByRole("option").first()).toContainText("Job #7 ·");
+    await input.fill("failed");
+    await expect(charts(page).getByRole("option")).toHaveCount(1);
+    await expect(charts(page).getByRole("option")).toContainText("Job #17 ·");
+    await input.fill("unknown dataset");
+    await expect(charts(page).getByText("No matching jobs. Try another ID or dataset.")).toBeVisible();
+    await input.press("Enter");
+    await expect(page).toHaveURL(/job=7/);
+    await input.press("Escape");
+    await expect(input).toHaveValue(/^Job #7 ·/);
+    await expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(state.metricCalls).toBe(metrics);
+    expect(await page.evaluate(() => window.chartChanges)).toBe(0);
+  });
+
+  test("limits suggestions, paginates all history and searches older jobs directly", async ({ page }) => {
+    const state = await setup(page);
+    state.jobs = Array.from({ length: 27 }, (_, index) => ({ ...state.jobs[0], id: 27 - index }));
+    state.jobs[26].status = "training";
+    await page.goto("/projects/1/training?job=7");
+    const input = charts(page).getByRole("combobox");
+    await input.click();
+    await expect(charts(page).getByRole("option")).toHaveCount(10);
+    await expect(charts(page).getByRole("option").first()).toContainText("Job #1 ·");
+    const list = charts(page).getByRole("listbox");
+    expect(await list.evaluate(el => el.clientHeight)).toBeLessThanOrEqual(280);
+    expect(await list.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+    await charts(page).getByRole("button", { name: "View all history (27)" }).click();
+    await charts(page).getByRole("button", { name: "Next suggestions" }).click();
+    await expect(charts(page).getByText("Page 2 of 3")).toBeVisible();
+    await charts(page).getByRole("button", { name: "Next suggestions" }).click();
+    await expect(charts(page).getByRole("option")).toHaveCount(7);
+    await expect(charts(page).getByRole("button", { name: "Next suggestions" })).toBeDisabled();
+    await input.fill("job#");
+    await expect(charts(page).getByText("27 matching jobs")).toBeVisible();
+    await expect(charts(page).getByText("Page 1 of 3")).toBeVisible();
+    await selectJob(page, 6);
+    await expectEpochs(page, 1);
+    await expect(page).toHaveURL(/job=6/);
+  });
+
+  test("supports keyboard selection, dismissal and opening again", async ({ page }) => {
+    await setup(page);
+    await page.goto("/projects/1/training?job=7");
+    await expectEpochs(page, 2);
+    const input = charts(page).getByRole("combobox");
+    await input.fill("j");
+    await input.press("ArrowDown");
+    await expect(input).toHaveAttribute("aria-activedescendant", /option-7$/);
+    await input.press("ArrowDown");
+    await expect(input).toHaveAttribute("aria-activedescendant", /option-6$/);
+    await input.press("ArrowUp");
+    await expect(input).toHaveAttribute("aria-activedescendant", /option-7$/);
+    await input.press("ArrowDown");
+    await input.press("Enter");
+    await expectEpochs(page, 1);
+    await expect(input).toHaveValue(/^Job #6 ·/);
+    await input.click();
+    await input.fill("missing");
+    await input.press("Tab");
+    await expect(input).toHaveAttribute("aria-expanded", "false");
+    await expect(input).toHaveValue(/^Job #6 ·/);
+    await input.click();
+    await expect(charts(page).getByRole("option")).toHaveCount(2);
+    await charts(page).getByRole("heading", { name: "Training Graphs", exact: true }).click();
+    await expect(input).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("keeps the popup within a mobile viewport", async ({ page }) => {
+    const state = await setup(page);
+    state.jobs = Array.from({ length: 25 }, (_, index) => ({ ...state.jobs[0], id: 25 - index }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/projects/1/training?job=7");
+    await charts(page).getByRole("combobox").fill("j");
+    const popup = charts(page).locator(".training-job-picker__popup");
+    const bounds = await popup.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+    expect(await popup.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await charts(page).getByRole("option", { name: /^Job #25 ·/ }).click();
+    await expect(page).toHaveURL(/job=25/);
   });
 });
 

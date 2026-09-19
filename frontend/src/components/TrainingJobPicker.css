@@ -1,0 +1,73 @@
+.training-job-picker {
+  position: relative;
+  width: 340px;
+  max-width: 100%;
+  min-width: 0;
+  color: #c7cbe0;
+  font-size: 13px;
+}
+
+.training-job-picker label { display: block; margin-bottom: 8px; font-weight: 700; }
+.training-job-picker input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #181b24;
+  color: #f4f6fb;
+  font: inherit;
+}
+.training-job-picker input::placeholder { color: #9ba3b5; }
+.training-job-picker input:focus-visible,
+.training-job-picker button:focus-visible { outline: 2px solid #9da9ff; outline-offset: 2px; }
+.training-job-picker__hint { display: block; margin-top: 6px; color: #9ba3b5; font-size: 12px; }
+.training-job-picker__popup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin-top: 6px;
+  border: 1px solid #454c65;
+  border-radius: 10px;
+  background: #181b24;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.training-job-picker__info { margin: 0; padding: 10px 12px; color: #9ba3b5; font-size: 12px; }
+.training-job-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: min(280px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.training-job-picker li {
+  padding: 10px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.training-job-picker li[aria-selected="true"] { color: #c9ceff; font-weight: 700; }
+.training-job-picker li:hover,
+.training-job-picker__option--active { background: #30364f; }
+.training-job-picker button {
+  padding: 8px;
+  border: 1px solid #454c65;
+  border-radius: 6px;
+  color: #e2e6ff;
+  background: #252b40;
+  font: inherit;
+  cursor: pointer;
+}
+.training-job-picker button:disabled { opacity: 0.4; cursor: default; }
+.training-job-picker__history { display: block; width: calc(100% - 16px); margin: 8px; }
+.training-job-picker__pages { display: flex; align-items: center; gap: 8px; padding: 8px; border-top: 1px solid #454c65; }
+.training-job-picker__pages span { flex-shrink: 0; font-size: 12px; }
+
+@media (max-width: 480px) {
+  .training-job-picker { width: 100%; }
+}

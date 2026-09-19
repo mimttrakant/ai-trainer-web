@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import "./TrainingCharts.css";
 import { reuseUnchangedList } from "../utils/trainingData";
+import TrainingJobPicker from "./TrainingJobPicker";
 
 const POLL_INTERVAL = 3000;
 const isActive = (status) => status === "queued" || status === "training";
@@ -22,10 +23,10 @@ const TrainingCharts = memo(function TrainingCharts({ apiUrl, ownerId, jobs, dat
     || jobs.find((job) => isActive(job.status))
     || jobs[0];
 
-  function selectJob(event) {
+  function selectJob(jobId) {
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous);
-      next.set("job", event.target.value);
+      next.set("job", String(jobId));
       return next;
     }, { replace: true });
   }
@@ -38,17 +39,13 @@ const TrainingCharts = memo(function TrainingCharts({ apiUrl, ownerId, jobs, dat
           <p>View saved training history or follow a training job in progress.</p>
         </div>
         {selectedJob && (
-          <label className="training-charts__selector">
-            Training job
-            <select value={selectedJob.id} onChange={selectJob}>
-              {jobs.map((job) => (
-                <option key={job.id} value={job.id}>
-                  Job #{job.id} · {datasets.find((dataset) => dataset.id === job.dataset_id)?.name
-                    || `Dataset #${job.dataset_id}`} · {job.status}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TrainingJobPicker
+            key={selectedJob.id}
+            jobs={jobs}
+            datasets={datasets}
+            selectedJob={selectedJob}
+            onSelect={selectJob}
+          />
         )}
       </div>
       {selectedJob ? (
