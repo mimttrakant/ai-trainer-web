@@ -5,21 +5,25 @@ import "./LibraryUI.css";
 export function useLibrary(resource, scope, query, page, extra = "", refresh = 0) {
   const [state, setState] = useState({ items: [], total: 0, loading: true, error: "" });
   useEffect(() => {
-    const controller = new AbortController();
-    let timer;
+    let controller; let timer; let inFlight = false;
     let cancelled = false;
     const load = async () => {
+      if (cancelled || inFlight || document.visibilityState === "hidden") return;
+      clearTimeout(timer); inFlight = true; controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
         const result = await api(`/library/${resource}?scope=${scope}&q=${encodeURIComponent(query)}&page=${page}&page_size=10${extra}`, { signal: controller.signal });
         if (!cancelled) setState({ ...result, loading: false, error: "" });
         if (!cancelled) timer = setTimeout(load, result.items.some(row => ["queued", "training", "processing", "uploading"].includes(row.status)) ? 3000 : 30000);
       } catch (error) {
         if (!cancelled) setState({ items: [], total: 0, loading: false, error: error.message });
-      }
+        if (!cancelled) timer = setTimeout(load, 3000);
+      } finally { clearTimeout(timeout); inFlight = false; }
     };
     setState({ items: [], total: 0, loading: true, error: "" });
     timer = setTimeout(load, 250);
-    return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
+    document.addEventListener("visibilitychange", load); window.addEventListener("online", load);
+    return () => { cancelled = true; controller?.abort(); clearTimeout(timer); document.removeEventListener("visibilitychange", load); window.removeEventListener("online", load); };
   }, [resource, scope, query, page, extra, refresh]);
   return state;
 }
@@ -44,7 +48,9 @@ export function Pagination({ page, total, onChange }) {
 export function Modal({ title, children, onClose, busy = false }) {
   const ref = useRef(null);
   useEffect(() => { const element = ref.current; const previous = document.activeElement; element.showModal(); return () => { element.close(); previous?.focus(); }; }, []);
-  return <dialog ref={ref} className="library-modal" aria-label={title} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
+  return <dialog ref={ref} className="library-modal" aria-label={title}
+    onKeyDownCapture={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); } }}
+    onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
     <header><h2>{title}</h2><button type="button" disabled={busy} aria-label="Close dialog" onClick={onClose}>×</button></header>{children}
   </dialog>;
 }

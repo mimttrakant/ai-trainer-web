@@ -86,6 +86,7 @@ def details(dataset_id: int, user=Depends(current_user), db: Session = Depends(g
 
 @router.patch("/library/datasets/{dataset_id}/visibility")
 def visibility(dataset_id: int, body: VisibilityUpdate, user=Depends(current_user), db: Session = Depends(get_db)):
+    db.query(Dataset).filter_by(id=dataset_id).with_for_update().populate_existing().first()
     item = visible_dataset(db, dataset_id, user, write=True)
     if body.visibility == "public" and item.status not in {"ready", "unsupported"}:
         raise HTTPException(409, "Wait until dataset import finishes before sharing.")

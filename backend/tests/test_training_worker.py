@@ -304,6 +304,32 @@ class WorkerPostgresTests(unittest.TestCase):
             self.assertEqual(metadata["project_version"], 3)
             self.assertEqual(metadata["model_name"], "Original model")
 
+    def test_accepted_community_job_keeps_snapshot_and_publishes_private_weights_for_submitter(self):
+        self.add_jobs(2)
+        with self.sessions() as db:
+            project = db.get(Project, 1)
+            for job_id in [1, 2]:
+                job = db.get(TrainingJob, job_id)
+                job.owner_id = 2
+                job.architecture_json = project.architecture_json
+                job.project_version = 7
+                job.model_name = "alice/Shared design"
+            # Job 1 was admitted with verified sharing; a legacy forged job is not.
+            job = db.get(TrainingJob, 1)
+            job.source_project_owner_id = 1
+            job.source_dataset_owner_id = 1
+            project.visibility = "private"  # Revocation affects future submissions only.
+            db.commit()
+        self.assertTrue(worker.process_training_job(1))
+        self.assertTrue(worker.process_training_job(2))
+        with self.sessions() as db:
+            self.assertEqual(db.get(TrainingJob, 1).status, "completed")
+            self.assertEqual(db.get(TrainingJob, 2).status, "failed")
+            weight = db.query(ModelVersion).one()
+            self.assertEqual((weight.owner_id, weight.project_version, weight.visibility), (2, 7, "private"))
+            self.assertIn("user_2", weight.pt_path)
+            self.assertTrue(Path(weight.pt_path).is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

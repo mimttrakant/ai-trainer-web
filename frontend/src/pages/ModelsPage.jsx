@@ -56,6 +56,7 @@ export function VersionSelect({ modelId, value, onChange }) {
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController(); let active = true;
+    onChange("");
     setState({ rows: [], loading: true, error: "" });
     api(`/library/models/${modelId}/versions`, { signal: controller.signal }).then(result => {
       if (active) { setState({ rows: result.versions, loading: false, error: "" }); onChange(result.versions[0]?.version ?? ""); }
@@ -65,7 +66,8 @@ export function VersionSelect({ modelId, value, onChange }) {
   return <><label className="library-field">Model version<select aria-label="Model version" value={value} disabled={state.loading || !state.rows.length} onChange={event => onChange(Number(event.target.value))}>
     {!state.rows.length && <option value="">{state.loading ? "Loading versions…" : "No saved versions"}</option>}
     {state.rows.map(row => <option key={row.version} value={row.version}>Version {row.version} · {row.model_name}</option>)}
-  </select></label>{state.error && <p role="alert">{state.error} <button type="button" onClick={() => setRetry(n => n + 1)}>Retry versions</button></p>}</>;
+  </select></label><button type="button" disabled={state.loading} onClick={() => setRetry(n => n + 1)}>Refresh versions</button>
+    {state.error && <p role="alert">{state.error} <button type="button" onClick={() => setRetry(n => n + 1)}>Retry versions</button></p>}</>;
 }
 
 function CloneDialog({ item, user, onClose, onCloned }) {

@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 import database
+from access import issue_session
 from models import Base, Dataset, ModelVersion, Project, ProjectEditorSession, ProjectVersion, TrainingJob, User
 from project_versioning import migrate_project_versions
 
@@ -52,6 +53,7 @@ class ProjectVersioningTests(unittest.TestCase):
             db.add(User(id=1, username="Version test", email="version@example.com"))
             db.add(Dataset(id=1, owner_id=1, name="Synthetic", source_type="upload", supported=True))
             db.commit()
+            self.client.headers["Authorization"] = f"Bearer {issue_session(db, 1)}"
         self.project = self.client.post("/projects", json={"name": "Test project", "description": "", "owner_id": 1}).json()["project"]
         self.id = self.project["id"]
         self.graph = json.dumps({"nodes": [{"id": "input", "data": {"layerType": "Input"}}], "edges": []})
@@ -87,7 +89,7 @@ class ProjectVersioningTests(unittest.TestCase):
         for graph in ["invalid", "[]", "{}", '{"nodes": [], "edges": []}', '{"nodes": [{"id": "x"}], "edges": []}']:
             self.assertEqual(self.save(0, graph=graph).status_code, 422)
         self.assertEqual(self.save(0, name=" ").status_code, 422)
-        self.assertEqual(self.save(0, owner=999).status_code, 404)
+        self.assertEqual(self.save(0, owner=999).status_code, 403)
         self.assertEqual(self.save(3).status_code, 409)
         self.assertEqual(self.client.get(f"/project/{self.id}").json()["project"]["version"], 0)
 
@@ -152,8 +154,8 @@ class ProjectVersioningTests(unittest.TestCase):
         invalid = self.client.post("/training/jobs", json={"owner_id": 1, "project_id": self.id,
             "dataset_id": 1, "project_version": 999})
         self.assertEqual(invalid.status_code, 404)
-        self.assertEqual(self.client.get(f"/projects/{self.id}/versions?owner_id=999").status_code, 404)
-        self.assertEqual(self.client.get(f"/projects/{self.id}/versions/1?owner_id=999").status_code, 404)
+        self.assertEqual(self.client.get(f"/projects/{self.id}/versions?owner_id=999").status_code, 403)
+        self.assertEqual(self.client.get(f"/projects/{self.id}/versions/1?owner_id=999").status_code, 403)
 
     def test_presence_counts_separate_tabs_expires_and_does_not_replace_save_locks(self):
         first, second = str(uuid4()), str(uuid4())
@@ -161,7 +163,7 @@ class ProjectVersioningTests(unittest.TestCase):
         self.assertEqual(self.client.put(f"{url}{first}?owner_id=1").json()["active_editors"], 1)
         self.assertEqual(self.client.put(f"{url}{second}?owner_id=1").json()["active_editors"], 2)
         self.assertEqual(self.client.put(f"{url}{first}?owner_id=1").json()["active_editors"], 2)
-        self.assertEqual(self.client.put(f"{url}{uuid4()}?owner_id=2").status_code, 404)
+        self.assertEqual(self.client.put(f"{url}{uuid4()}?owner_id=2").status_code, 403)
         with self.sessions() as db:
             db.get(ProjectEditorSession, second).last_seen = datetime.utcnow() - timedelta(seconds=61)
             db.commit()

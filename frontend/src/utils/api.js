@@ -42,7 +42,9 @@ export async function api(path, options = {}) {
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result.success === false) {
     const message = result.detail || result.message;
-    throw new Error(typeof message === "string" ? message : `Request failed (${response.status}). Check backend logs.`);
+    const error = new Error(typeof message === "string" ? message : `Request failed (${response.status}). Check backend logs.`);
+    error.status = response.status;
+    throw error;
   }
   return result;
 }

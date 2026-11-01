@@ -92,13 +92,13 @@ function BuilderEditor({ id }) {
       );
 
       if (!response.data.success) {
-        setSaveStatus(response.data.message || "Unable to load project.");
+        setSaveStatus(response.data.message || "Unable to load model.");
         return;
       }
 
       const project = response.data.project;
       if (project.owner_id !== ownerId) {
-        setSaveStatus("Project not found or access denied.");
+        setSaveStatus("Model not found or access denied.");
         return;
       }
       const architecture = JSON.parse(project.architecture_json || "{}");
@@ -119,7 +119,7 @@ function BuilderEditor({ id }) {
       setLoading(false);
     } catch (error) {
       if (signal.aborted) return;
-      setSaveStatus("Unable to load project. Reload the page to retry.");
+      setSaveStatus("Unable to load model. Reload the page to retry.");
       console.error(
         "Load architecture error:",
         error
@@ -457,13 +457,13 @@ function BuilderEditor({ id }) {
     try {
       if (file.size > MAX_BUILDER_FILE_BYTES) throw new Error("JSON files must be no larger than 2 MB.");
       const imported = parseBuilderJson(await file.text(), modelName);
-      if (nodes.length && !window.confirm("Replace the current canvas and model name with this JSON? Unsaved changes will be replaced. The saved project stays unchanged until you click Save Architecture.")) return;
+      if (nodes.length && !window.confirm("Replace the current canvas and model name with this JSON? Unsaved changes will be replaced. The saved model stays unchanged until you click Save Architecture.")) return;
       setNodes(imported.architecture.nodes);
       setEdges(imported.architecture.edges);
       setModelName(imported.modelName);
       setSelectedNodeId(null);
       setSaveStatus("");
-      setFileStatus(`JSON imported as a draft. Save Architecture to create a new version after Builder Version ${headVersion} in this project.`);
+      setFileStatus(`JSON imported as a draft. Save Architecture to create a new version after Builder Version ${headVersion} in this model.`);
       requestAnimationFrame(() => reactFlowInstance?.fitView());
     } catch (error) {
       setFileStatus(error.message);
@@ -597,7 +597,7 @@ function BuilderEditor({ id }) {
           </div>
           <p style={{ fontSize: 13 }}>
             {presence.connected ? `${presence.active_editors} active Builder session(s).` : "Checking other editors… Save conflict protection stays enabled."}
-            {presence.active_editors > 1 && " Another editor has this project open. Saves are checked for conflicts."}
+            {presence.active_editors > 1 && " Another editor has this model open. Saves are checked for conflicts."}
           </p>
           {knownLatest > headVersion && <p role="alert">A newer Builder Version {knownLatest} exists. Your draft is preserved. Export it before loading another version; stale saves will be rejected.</p>}
           {history.error && <p role="alert">{history.error}</p>}

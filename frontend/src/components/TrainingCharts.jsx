@@ -163,7 +163,7 @@ const JobCharts = memo(function JobCharts({ apiUrl, ownerId, job }) {
   );
 });
 
-const MetricChart = memo(function MetricChart({ title, metrics, kind, emptyMessage }) {
+export const MetricChart = memo(function MetricChart({ title, metrics, kind, emptyMessage }) {
   const accuracy = kind === "accuracy";
   return (
     <article className="training-charts__plot" aria-label={title}>

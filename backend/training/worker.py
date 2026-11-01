@@ -311,13 +311,13 @@ def process_training_job(
                 "not found."
             )
 
-        if dataset.owner_id != job.owner_id:
+        if dataset.owner_id != job.owner_id and job.source_dataset_owner_id != dataset.owner_id:
             raise ValueError(
                 "Dataset does not belong "
                 "to this user."
             )
 
-        if project.owner_id != job.owner_id:
+        if project.owner_id != job.owner_id and (job.source_project_owner_id != project.owner_id or not job.architecture_json):
             raise ValueError(
                 "Project does not belong "
                 "to this user."

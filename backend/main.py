@@ -12,6 +12,7 @@ from access import issue_session, protect_legacy
 from library_migration import migrate_library
 from library_datasets import router as library_dataset_router
 from library_models import router as library_model_router
+from library_training import router as library_training_router
 from datetime import datetime
 from database import engine, get_db
 from dataset_details import router as dataset_details_router
@@ -80,6 +81,7 @@ with engine.begin() as connection:
 app = FastAPI(dependencies=[Depends(protect_legacy)])
 app.include_router(library_dataset_router)
 app.include_router(library_model_router)
+app.include_router(library_training_router)
 app.include_router(model_router)
 app.include_router(dataset_details_router)
 app.include_router(project_version_router)
@@ -694,6 +696,8 @@ def delete_dataset(
             Dataset.id == dataset_id,
             Dataset.owner_id == owner_id,
         )
+        .with_for_update()
+        .populate_existing()
         .first()
     )
 

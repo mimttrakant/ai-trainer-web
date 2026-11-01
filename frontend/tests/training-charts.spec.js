@@ -1,480 +1,82 @@
 import { test, expect } from "@playwright/test";
+import { setupTraining, chooseTraining, job, metric } from "./training-fixture";
 
-const epoch = (number) => ({
-  epoch: number,
-  train_loss: 1 / number,
-  val_loss: 1.2 / number,
-  train_accuracy: 60 + number * 10,
-  val_accuracy: 50 + number * 10,
+test("saved graphs survive reload, navigation and reopening a tab", async ({ page, context }) => {
+  await setupTraining(page); await page.goto("/training?job=4");
+  const chart = page.getByRole("article", { name: "Loss Graph", exact: true });
+  await expect(chart.locator(".recharts-line-dot")).toHaveCount(4);
+  await page.reload(); await expect(chart.locator(".recharts-line-dot")).toHaveCount(4);
+  await page.getByRole("link", { name: "Models", exact: true }).click(); await page.goBack();
+  await expect(chart.locator(".recharts-line-dot")).toHaveCount(4);
+  const another = await context.newPage(); await setupTraining(another); await another.goto("/training?job=4");
+  await expect(another.getByRole("article", { name: "Accuracy Graph" }).locator(".recharts-line-dot")).toHaveCount(4);
 });
 
-async function setup(page, status = "completed") {
-  const state = {
-    jobs: [
-      { id: 7, owner_id: 2, project_id: 1, dataset_id: 4, status, current_epoch: 2, total_epochs: 3 },
-      { id: 6, owner_id: 2, project_id: 1, dataset_id: 4, status: "completed", current_epoch: 1, total_epochs: 1 },
-    ],
-    history: { 7: [epoch(2), epoch(1)], 6: [epoch(1)] },
-    metricCalls: 0,
-    jobCalls: 0,
-    modelCalls: 0,
-    modelFailures: 0,
-    fail: false,
-    delay: 0,
-    createFails: false,
-    requestedVersion: null,
-  };
-  await page.addInitScript(() => localStorage.setItem("user", JSON.stringify({ id: 2, username: "Chart test" })));
-  await page.route("http://localhost:8000/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    let payload;
-    if (path === "/training/jobs" && route.request().method() === "POST") {
-      state.requestedVersion = route.request().postDataJSON().project_version;
-      if (state.createFails) {
-        payload = { success: false, message: "Unable to start training." };
-      } else {
-        const job = { ...state.jobs[0], id: 8, status: "queued", current_epoch: 0 };
-        state.jobs.unshift(job);
-        state.history[8] = [];
-        payload = { success: true, job };
-      }
-    } else if (path.endsWith("/versions")) {
-      payload = { success: true, latest_version: 2, versions: [{ id: 2, version: 2, model_name: "Latest model" }, { id: 1, version: 1, model_name: "Original model" }] };
-    } else if (path.endsWith("/metrics")) {
-      state.metricCalls += 1;
-      if (state.fail) {
-        await route.fulfill({ status: 503, json: { success: false } });
-        return;
-      }
-      const jobId = path.split("/")[3];
-      payload = { success: true, job_id: Number(jobId), metrics: [...(state.history[jobId] || [])] };
-      if (state.delay) await new Promise((resolve) => setTimeout(resolve, state.delay));
-    } else if (path.endsWith("/jobs")) {
-      state.jobCalls += 1;
-      payload = { success: true, jobs: state.jobs };
-    } else if (path.endsWith("/models")) {
-      state.modelCalls += 1;
-      if (state.modelFailures > 0) {
-        state.modelFailures -= 1;
-        await route.fulfill({ status: 503, json: { success: false } });
-        return;
-      }
-      payload = { success: true, models: [] };
-    } else {
-      payload = { success: true, datasets: [{ id: 4, name: "Test images", supported: true }] };
-    }
-    await route.fulfill({ json: payload, headers: { "Access-Control-Allow-Origin": "*" } });
-  });
-  return state;
-}
-
-function charts(page) {
-  return page.getByRole("region", { name: "Training Graphs" });
-}
-
-async function selectJob(page, id) {
-  await charts(page).getByRole("combobox").fill(`job#${id}`);
-  await charts(page).getByRole("option", { name: new RegExp(`^Job #${id} ·`) }).click();
-}
-
-async function expectEpochs(page, count) {
-  await expect(charts(page).getByText(new RegExp(`· ${count} saved epochs$`))).toBeVisible();
-  if (count > 0) {
-    for (const title of ["Loss Graph", "Accuracy Graph"]) {
-      const plot = page.getByRole("article", { name: title });
-      await expect(plot.locator(".recharts-line-dot")).toHaveCount(count * 2);
-    }
-  }
-}
-
-test("loads saved history, restores it after reload, navigation and reopening a tab", async ({ page, context }) => {
-  const state = await setup(page);
-  await page.goto("/projects/1/training");
-  await expectEpochs(page, 2);
-  await expect(charts(page).getByText("Saved history", { exact: true })).toBeVisible();
-  await expect(page.getByRole("article", { name: "Accuracy Graph" }).getByText("100%", { exact: true })).toBeVisible();
-  await selectJob(page, 6);
-  await expectEpochs(page, 1);
-  await expect(page).toHaveURL(/job=6/);
-  await page.reload();
-  await expectEpochs(page, 1);
-  await page.goto("/");
-  await page.goto("/projects/1/training?job=7");
-  await expectEpochs(page, 2);
-  expect(state.metricCalls).toBeGreaterThanOrEqual(4);
-
-  // A fresh page has no React state or chart cache to restore from.
-  await page.close();
-  const reopened = await context.newPage();
-  await setup(reopened);
-  await reopened.goto("/projects/1/training?job=7");
-  await expectEpochs(reopened, 2);
+test("polls live epochs without duplicates or unchanged chart redraws and loads final completion", async ({ page }) => {
+  const state = await setupTraining(page, { jobs: [job(4, "training")] }); await page.goto("/training?job=4");
+  const chart = page.getByRole("article", { name: "Loss Graph" }); await expect(chart.locator(".recharts-line-dot")).toHaveCount(4);
+  await chart.evaluate(element => { window.chartMutations = 0; new MutationObserver(rows => { window.chartMutations += rows.length; }).observe(element, { subtree: true, childList: true, attributes: true, characterData: true }); });
+  const initial = state.detailCalls; await expect.poll(() => state.detailCalls).toBeGreaterThan(initial);
+  expect(await page.evaluate(() => window.chartMutations)).toBe(0);
+  state.metrics[4].push(metric(3)); state.jobs[0].current_epoch = 3;
+  await expect(chart.locator(".recharts-line-dot")).toHaveCount(6);
+  state.jobs[0].status = "completed"; state.metrics[4].push(metric(4));
+  await expect(chart.locator(".recharts-line-dot")).toHaveCount(8);
 });
 
-test("updates after each epoch, avoids duplicates and fetches the final completed epoch", async ({ page }) => {
-  const state = await setup(page, "queued");
-  state.history[7] = [];
-  state.jobs[0].current_epoch = 0;
-  await page.goto("/projects/1/training");
-  await expect(charts(page).getByText("Waiting for the first completed epoch…")).toHaveCount(2);
-  state.jobs[0].status = "training";
-  state.jobs[0].current_epoch = 1;
-  state.history[7] = [epoch(1)];
-  await expectEpochs(page, 1);
-  const calls = state.metricCalls;
-  const jobCalls = state.jobCalls;
-  await expect.poll(() => state.jobCalls).toBeGreaterThan(jobCalls);
-  expect(state.metricCalls).toBe(calls);
-  await expectEpochs(page, 1);
-  state.history[7] = [epoch(1), epoch(2), epoch(3)];
-  state.jobs[0].status = "completed";
-  state.jobs[0].current_epoch = 3;
-  await expect(charts(page).getByText("Saved history", { exact: true })).toBeVisible();
-  await expectEpochs(page, 3);
-  const finishedCalls = state.metricCalls;
-  await page.waitForTimeout(3500);
-  expect(state.metricCalls).toBe(finishedCalls);
+test("retains saved graphs on network failure and recovers, but clears revoked public results", async ({ page }) => {
+  const state = await setupTraining(page, { jobs: [job(4, "training")] }); await page.goto("/training?job=4");
+  const chart = page.getByRole("article", { name: "Loss Graph" }); await expect(chart.locator(".recharts-line-dot")).toHaveCount(4);
+  state.failDetails = true; await expect(page.getByText("Temporary network failure.")).toBeVisible();
+  await expect(chart.locator(".recharts-line-dot")).toHaveCount(4);
+  state.failDetails = false; await page.getByRole("button", { name: "Retry results" }).click(); await expect(page.getByText("Temporary network failure.")).toHaveCount(0);
+  state.revoked = true; await expect(page.getByText("Training result is private or unavailable.")).toBeVisible(); await expect(chart).toHaveCount(0);
 });
 
-test("keeps existing graphs on network failure and recovers automatically", async ({ page }) => {
-  const state = await setup(page, "training");
-  await page.goto("/projects/1/training");
-  await expectEpochs(page, 2);
-  state.fail = true;
-  state.jobs[0].current_epoch = 3;
-  await expect(charts(page).getByRole("alert")).toContainText("retrying automatically");
-  await expectEpochs(page, 2);
-  state.fail = false;
-  state.history[7] = [epoch(1), epoch(2), epoch(3)];
-  await expectEpochs(page, 3);
-  await expect(charts(page).getByRole("alert")).toHaveCount(0);
+test("switching jobs ignores late responses and empty histories are explicit", async ({ page }) => {
+  await setupTraining(page, { jobs: [job(4), job(5)], detailDelay: { 4: 1000 }, metrics: { 4: [metric(1)], 5: [] } });
+  await page.goto("/training?job=4"); await page.getByRole("button", { name: "View Job #5", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Job #5 details" })).toBeVisible();
+  await expect(page.getByText("No completed epochs yet.")).toHaveCount(2);
+  await expect(page.getByRole("region", { name: "Job #4 details" })).toHaveCount(0);
 });
 
-test("does not show a late response from the previous selected job", async ({ page }) => {
-  const state = await setup(page);
-  state.delay = 1500;
-  await page.goto("/projects/1/training?job=7");
-  await expect.poll(() => state.metricCalls).toBeGreaterThan(0);
-  state.delay = 0;
-  await selectJob(page, 6);
-  await expectEpochs(page, 1);
-  await page.waitForTimeout(1800);
-  await expectEpochs(page, 1);
-  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #6 ·/);
-});
-
-test("shows an honest empty state for old jobs without recorded epochs", async ({ page }) => {
-  const state = await setup(page);
-  state.history[7] = [];
-  await page.goto("/projects/1/training");
-  await expect(charts(page).getByText("No epoch history was saved for this job.")).toHaveCount(2);
-  await expect(charts(page).locator(".recharts-line")).toHaveCount(0);
-});
-
-test("selects the newly created job instead of a saved selection or another running job", async ({ page }) => {
-  const state = await setup(page, "training");
-  await page.goto("/projects/1/training?job=6&view=history");
-  await expectEpochs(page, 1);
+test("chooses exact saved version, separates setup sections and selects newly submitted job", async ({ page }) => {
+  const state = await setupTraining(page); await page.goto("/training?job=4"); await chooseTraining(page);
+  await page.getByLabel("Model version", { exact: true }).selectOption("1");
+  await expect(page.getByRole("group", { name: "1. Model", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "2. Dataset", exact: true })).toContainText("2 classes");
+  await expect(page.getByRole("group", { name: "3. Parameters", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Start Training", exact: true }).click();
-  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #8 ·/);
-  await expect(page).toHaveURL(/job=8&view=history/);
-  await expectEpochs(page, 0);
-  await expect(charts(page).getByText("Waiting for the first completed epoch…")).toHaveCount(2);
-  state.jobs[0].status = "training";
-  state.jobs[0].current_epoch = 1;
-  state.history[8] = [epoch(1)];
-  await expectEpochs(page, 1);
-  await page.reload();
-  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #8 ·/);
-  await expectEpochs(page, 1);
-  // Historical selection remains available after starting a new job.
-  await selectJob(page, 7);
-  await expectEpochs(page, 2);
+  await expect(page).toHaveURL(/job=99/); await expect(page.getByRole("region", { name: "Job #99 details" })).toBeVisible();
+  expect(state.submits[0]).toMatchObject({ model_id: 1, version: 1, dataset_id: 1, total_epochs: 10, batch_size: 32, learning_rate: 0.001 });
 });
 
-test("keeps the selected history when starting a new job fails", async ({ page }) => {
-  const state = await setup(page);
-  state.createFails = true;
-  await page.goto("/projects/1/training?job=6");
-  await expectEpochs(page, 1);
-  await page.getByRole("button", { name: "Start Training", exact: true }).click();
-  await expect(page.getByText("Unable to start training.", { exact: true })).toBeVisible();
-  await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #6 ·/);
-  await expectEpochs(page, 1);
+test("changing model resets to latest version and rejected submission preserves selected history", async ({ page }) => {
+  const state = await setupTraining(page); await page.goto("/training?job=4"); await chooseTraining(page);
+  await page.getByLabel("Model version", { exact: true }).selectOption("1");
+  await page.getByRole("button", { name: "Choose model", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Public (Community)", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /bob\/Community/ }).click();
+  await expect(page.getByLabel("Model version", { exact: true })).toHaveValue("9");
+  await expect(page.getByLabel("Model version", { exact: true }).locator("option")).toHaveCount(2);
+  state.failSubmit = true; await page.getByRole("button", { name: "Start Training", exact: true }).click();
+  await expect(page.getByText("Model is no longer public.")).toBeVisible(); await expect(page).toHaveURL(/job=4/);
 });
 
-test("submits the exact saved Builder version selected for training", async ({ page }) => {
-  const state = await setup(page);
-  await page.goto("/projects/1/training");
-  await page.getByRole("combobox", { name: "Model version to train", exact: true }).selectOption("1");
-  await page.getByRole("button", { name: "Start Training", exact: true }).click();
-  await expect.poll(() => state.requestedVersion).toBe(1);
+test("model selector searches and paginates in a bounded popup", async ({ page }) => {
+  await setupTraining(page, { manyModels: true }); await page.goto("/training");
+  await page.getByRole("button", { name: "Choose model", exact: true }).click(); const modal = page.getByRole("dialog");
+  await expect(modal.locator(".training-job-row")).toHaveCount(10); await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByText("alice/Model 11", { exact: true })).toBeVisible();
+  await modal.getByRole("searchbox", { name: "Search choices" }).fill("Model 23");
+  await expect(modal.locator(".training-job-row")).toHaveCount(1); await expect(modal.getByText("alice/Model 23")).toBeVisible();
+  await page.keyboard.press("Escape"); await expect(modal).toHaveCount(0);
 });
 
-test("renders both charts on a narrow screen without horizontal overflow", async ({ page }, testInfo) => {
-  await setup(page);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/projects/1/training");
-  await expectEpochs(page, 2);
-  const loss = await page.getByRole("article", { name: "Loss Graph" }).boundingBox();
-  const accuracy = await page.getByRole("article", { name: "Accuracy Graph" }).boundingBox();
-  expect(accuracy.y).toBeGreaterThan(loss.y + loss.height);
-  expect(loss.x + loss.width).toBeLessThanOrEqual(390);
-  expect(accuracy.x + accuracy.width).toBeLessThanOrEqual(390);
-  await charts(page).screenshot({ path: testInfo.outputPath("training-charts-mobile.png") });
-});
-
-test.describe("training job history visibility", () => {
-  test.use({ timezoneId: "Asia/Bangkok" });
-
-  const jobList = (page) => page.getByRole("region", { name: "Training Jobs", exact: true });
-  const now = new Date("2026-09-19T12:00:00Z");
-
-  test("hides only completed jobs older than 48 hours and retains their graphs", async ({ page }) => {
-    const consoleErrors = [];
-    page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
-    const state = await setup(page);
-    const base = state.jobs[0];
-    state.jobs = [
-      { ...base, id: 12, finished_at: "2026-09-17T11:59:59" },
-      { ...base, id: 11, finished_at: "2026-09-17T12:00:00" },
-      { ...base, id: 10, finished_at: "2026-09-19T10:00:00+07:00" },
-      { ...base, id: 9, status: "training", finished_at: "2026-09-01T00:00:00" },
-      { ...base, id: 8, status: "failed", finished_at: "2026-09-01T00:00:00" },
-    ];
-    state.history[12] = [epoch(1), epoch(2)];
-    await page.clock.setFixedTime(now);
-    await page.goto("/projects/1/training");
-    const list = jobList(page);
-    await expect(list.getByRole("article")).toHaveCount(4);
-    await expect(list.getByText("Job #12", { exact: true })).toHaveCount(0);
-    for (const id of [11, 10, 9, 8]) {
-      await expect(list.getByText(`Job #${id}`, { exact: true })).toBeVisible();
-    }
-    await expect(list.getByRole("article").first()).toContainText("Job #9");
-    await list.getByRole("button", { name: "All history (5)", exact: true }).click();
-    await expect(list.getByRole("article")).toHaveCount(5);
-    await expect(list.getByText("Job #12", { exact: true })).toBeVisible();
-    await selectJob(page, 12);
-    await expectEpochs(page, 2);
-    await list.getByRole("button", { name: "Recent jobs (4)", exact: true }).click();
-    await expect(list.getByText("Job #12", { exact: true })).toHaveCount(0);
-    await expectEpochs(page, 2);
-    expect(consoleErrors).toEqual([]);
-  });
-
-  test("updates the 48-hour cutoff on refresh and explains an empty recent list", async ({ page }) => {
-    const state = await setup(page);
-    state.jobs = [{ ...state.jobs[0], finished_at: "2026-09-17T12:00:01" }];
-    await page.clock.setFixedTime(now);
-    await page.goto("/projects/1/training");
-    const list = jobList(page);
-    await expect(list.getByRole("article")).toHaveCount(1);
-    await page.clock.setFixedTime(new Date("2026-09-19T12:00:02Z"));
-    await list.getByRole("button", { name: "Refresh", exact: true }).click();
-    await expect(list.getByRole("article")).toHaveCount(0);
-    await expect(list.getByText("No active or recent jobs. Choose All history to view older completed jobs.")).toBeVisible();
-    await list.getByRole("button", { name: "All history (1)", exact: true }).click();
-    await expect(list.getByRole("article")).toHaveCount(1);
-    await expectEpochs(page, 2);
-  });
-
-  test("paginates five jobs at a time and returns to the first page for a new training job", async ({ page }) => {
-    const state = await setup(page);
-    state.jobs = Array.from({ length: 9 }, (_, index) => ({ ...state.jobs[0], id: 20 - index }));
-    await page.goto("/projects/1/training");
-    const list = jobList(page);
-    await expect(list.getByRole("article")).toHaveCount(5);
-    await expect(list.getByText("Showing 1–5 of 9 jobs")).toBeVisible();
-    await expect(list.getByRole("button", { name: "Previous", exact: true })).toBeDisabled();
-    await list.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(list.getByRole("article")).toHaveCount(4);
-    await expect(list.getByText("Showing 6–9 of 9 jobs")).toBeVisible();
-    await expect(list.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
-    await page.getByRole("button", { name: "Start Training", exact: true }).click();
-    await expect(list.getByText("Page 1 of 2", { exact: true })).toBeVisible();
-    await expect(list.getByRole("article").first()).toContainText("Job #8");
-    await expect(list.getByRole("article")).toHaveCount(5);
-    await expect(charts(page).getByRole("combobox")).toHaveValue(/^Job #8 ·/);
-  });
-
-  test("clamps pagination when a refresh removes the last page and keeps unknown completion dates visible", async ({ page }) => {
-    const state = await setup(page);
-    state.jobs = Array.from({ length: 6 }, (_, index) => ({
-      ...state.jobs[0], id: 20 - index, finished_at: index === 0 ? "invalid date" : null,
-    }));
-    await page.goto("/projects/1/training");
-    const list = jobList(page);
-    await expect(list.getByRole("article")).toHaveCount(5);
-    await list.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(list.getByRole("article")).toHaveCount(1);
-    state.jobs = state.jobs.slice(0, 3);
-    await list.getByRole("button", { name: "Refresh", exact: true }).click();
-    await expect(list.getByRole("article")).toHaveCount(3);
-    await expect(list.getByText("Page 1 of 1", { exact: true })).toBeVisible();
-    await expect(list.getByText("Job #20", { exact: true })).toBeVisible();
-  });
-});
-
-test.describe("searchable training job picker", () => {
-  test("suggests partial IDs, names and statuses without redrawing graphs or fetching metrics", async ({ page }) => {
-    const state = await setup(page);
-    state.jobs.push({ ...state.jobs[0], id: 17, status: "failed" });
-    await page.goto("/projects/1/training?job=7");
-    await expectEpochs(page, 2);
-    const metrics = state.metricCalls;
-    await page.evaluate(() => {
-      window.chartChanges = 0;
-      const observer = new MutationObserver(records => { window.chartChanges += records.length; });
-      document.querySelectorAll('.training-charts__plot').forEach(plot =>
-        observer.observe(plot, { attributes: true, childList: true, subtree: true, characterData: true }));
-    });
-    const input = charts(page).getByRole("combobox", { name: "Training job", exact: true });
-    for (const query of ["j", "job#", "JOB #", "test im"]) {
-      await input.fill(query);
-      await expect(charts(page).getByRole("option")).toHaveCount(3);
-    }
-    await input.fill("7");
-    await expect(charts(page).getByRole("option")).toHaveCount(2);
-    await expect(charts(page).getByRole("option").first()).toContainText("Job #7 ·");
-    await input.fill("failed");
-    await expect(charts(page).getByRole("option")).toHaveCount(1);
-    await expect(charts(page).getByRole("option")).toContainText("Job #17 ·");
-    await input.fill("unknown dataset");
-    await expect(charts(page).getByText("No matching jobs. Try another ID or dataset.")).toBeVisible();
-    await input.press("Enter");
-    await expect(page).toHaveURL(/job=7/);
-    await input.press("Escape");
-    await expect(input).toHaveValue(/^Job #7 ·/);
-    await expect(input).toHaveAttribute("aria-expanded", "false");
-    expect(state.metricCalls).toBe(metrics);
-    expect(await page.evaluate(() => window.chartChanges)).toBe(0);
-  });
-
-  test("limits suggestions, paginates all history and searches older jobs directly", async ({ page }) => {
-    const state = await setup(page);
-    state.jobs = Array.from({ length: 27 }, (_, index) => ({ ...state.jobs[0], id: 27 - index }));
-    state.jobs[26].status = "training";
-    await page.goto("/projects/1/training?job=7");
-    const input = charts(page).getByRole("combobox");
-    await input.click();
-    await expect(charts(page).getByRole("option")).toHaveCount(10);
-    await expect(charts(page).getByRole("option").first()).toContainText("Job #1 ·");
-    const list = charts(page).getByRole("listbox");
-    expect(await list.evaluate(el => el.clientHeight)).toBeLessThanOrEqual(280);
-    expect(await list.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
-    await charts(page).getByRole("button", { name: "View all history (27)" }).click();
-    await charts(page).getByRole("button", { name: "Next suggestions" }).click();
-    await expect(charts(page).getByText("Page 2 of 3")).toBeVisible();
-    await charts(page).getByRole("button", { name: "Next suggestions" }).click();
-    await expect(charts(page).getByRole("option")).toHaveCount(7);
-    await expect(charts(page).getByRole("button", { name: "Next suggestions" })).toBeDisabled();
-    await input.fill("job#");
-    await expect(charts(page).getByText("27 matching jobs")).toBeVisible();
-    await expect(charts(page).getByText("Page 1 of 3")).toBeVisible();
-    await selectJob(page, 6);
-    await expectEpochs(page, 1);
-    await expect(page).toHaveURL(/job=6/);
-  });
-
-  test("supports keyboard selection, dismissal and opening again", async ({ page }) => {
-    await setup(page);
-    await page.goto("/projects/1/training?job=7");
-    await expectEpochs(page, 2);
-    const input = charts(page).getByRole("combobox");
-    await input.fill("j");
-    await input.press("ArrowDown");
-    await expect(input).toHaveAttribute("aria-activedescendant", /option-7$/);
-    await input.press("ArrowDown");
-    await expect(input).toHaveAttribute("aria-activedescendant", /option-6$/);
-    await input.press("ArrowUp");
-    await expect(input).toHaveAttribute("aria-activedescendant", /option-7$/);
-    await input.press("ArrowDown");
-    await input.press("Enter");
-    await expectEpochs(page, 1);
-    await expect(input).toHaveValue(/^Job #6 ·/);
-    await input.click();
-    await input.fill("missing");
-    await input.press("Tab");
-    await expect(input).toHaveAttribute("aria-expanded", "false");
-    await expect(input).toHaveValue(/^Job #6 ·/);
-    await input.click();
-    await expect(charts(page).getByRole("option")).toHaveCount(2);
-    await charts(page).getByRole("heading", { name: "Training Graphs", exact: true }).click();
-    await expect(input).toHaveAttribute("aria-expanded", "false");
-  });
-
-  test("keeps the popup within a mobile viewport", async ({ page }) => {
-    const state = await setup(page);
-    state.jobs = Array.from({ length: 25 }, (_, index) => ({ ...state.jobs[0], id: 25 - index }));
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/projects/1/training?job=7");
-    await charts(page).getByRole("combobox").fill("j");
-    const popup = charts(page).locator(".training-job-picker__popup");
-    const bounds = await popup.boundingBox();
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
-    expect(await popup.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-    await charts(page).getByRole("option", { name: /^Job #25 ·/ }).click();
-    await expect(page).toHaveURL(/job=25/);
-  });
-});
-
-test.describe("training refresh performance", () => {
-  test("idle pages poll jobs after 30 seconds without repainting unchanged charts or reloading models", async ({ page }) => {
-    await page.clock.install();
-    const state = await setup(page);
-    await page.goto("/projects/1/training");
-    await expectEpochs(page, 2);
-    await expect(page.getByText("No active jobs. Updates every 30 seconds.", { exact: false })).toBeVisible();
-    const jobs = state.jobCalls;
-    const models = state.modelCalls;
-    const metrics = state.metricCalls;
-    await page.evaluate(() => {
-      window.chartChanges = 0;
-      const observer = new MutationObserver(records => { window.chartChanges += records.length; });
-      document.querySelectorAll('.training-charts__plot').forEach(plot =>
-        observer.observe(plot, { attributes: true, childList: true, subtree: true, characterData: true }));
-    });
-    await page.clock.fastForward(10000);
-    expect(state.jobCalls).toBe(jobs);
-    await page.clock.fastForward(21000);
-    await expect.poll(() => state.jobCalls).toBeGreaterThan(jobs);
-    expect(state.modelCalls).toBe(models);
-    expect(state.metricCalls).toBe(metrics);
-    await page.getByRole("region", { name: "Training Jobs", exact: true }).getByRole("button", { name: /All history/ }).click();
-    expect(await page.evaluate(() => window.chartChanges)).toBe(0);
-  });
-
-  test("active jobs fetch metrics on new epochs and reload models once when training completes", async ({ page }) => {
-    const state = await setup(page, "training");
-    await page.goto("/projects/1/training");
-    await expectEpochs(page, 2);
-    const models = state.modelCalls;
-    const metrics = state.metricCalls;
-    const jobs = state.jobCalls;
-    await expect.poll(() => state.jobCalls).toBeGreaterThan(jobs);
-    expect(state.modelCalls).toBe(models);
-    expect(state.metricCalls).toBe(metrics);
-    state.jobs[0].current_epoch = 3;
-    state.history[7] = [epoch(1), epoch(2), epoch(3)];
-    await expectEpochs(page, 3);
-    expect(state.modelCalls).toBe(models);
-    state.jobs[0].status = "completed";
-    await expect.poll(() => state.modelCalls).toBe(models + 1);
-    await expect(charts(page).getByText("Saved history", { exact: true })).toBeVisible();
-  });
-
-  test("returning to the tab finds new work immediately and retries a failed model refresh", async ({ page }) => {
-    const state = await setup(page);
-    await page.goto("/projects/1/training");
-    await expectEpochs(page, 2);
-    state.jobs[0].status = "training";
-    state.modelFailures = 1;
-    const models = state.modelCalls;
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(page.getByText("Progress refreshes every 3 seconds.", { exact: false })).toBeVisible();
-    await expect.poll(() => state.modelCalls).toBeGreaterThanOrEqual(models + 2);
-    await expectEpochs(page, 2);
-  });
+test("mobile charts and setup fit without horizontal overflow", async ({ page }, testInfo) => {
+  await setupTraining(page); await page.setViewportSize({ width: 390, height: 844 }); await page.goto("/training?job=4");
+  await expect(page.getByRole("article", { name: "Accuracy Graph" }).locator(".recharts-line-dot")).toHaveCount(4);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("training-mobile.png"), fullPage: true });
 });

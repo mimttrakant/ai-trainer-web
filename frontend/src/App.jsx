@@ -6,7 +6,7 @@ import Register from "./pages/Register";
 import ModelsPage from "./pages/ModelsPage";
 import DatasetPage from "./pages/DatasetPage";
 import BuilderPage from "./pages/BuilderPage";
-import TrainingPage from "./pages/TrainingPage";
+import TrainingPage from "./pages/TrainingWorkspace";
 
 function App() {
   return (

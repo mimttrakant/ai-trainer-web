@@ -30,3 +30,37 @@ metadata and explicit clone actions, not an editor. Clones copy only the selecte
 immutable architecture into a new private model with Version 1 and new row IDs.
 Design removal is soft deletion so existing jobs/weights retain provenance.
 Public means all saved versions of the design can be selected, not just latest.
+
+Training uses `/library/jobs`: the server verifies model and dataset access,
+locks the source rows for admission, and stores the exact selected architecture,
+version and source-owner IDs. Completed weights belong to the person who starts
+training, even when the source design/dataset belongs to someone else. Public
+access revocation stops new submissions; jobs already accepted keep their access
+grant and immutable design snapshot. Dataset removal is blocked while queued or
+running jobs reference it. Restart existing worker processes after upgrading,
+only after their active jobs have finished; `worker.bat 3` still means up to
+three concurrent jobs, not three dedicated CPU cores.
+
+Weights default to private. Sharing a completed weight exposes its saved graphs,
+model/dataset labels, parameters, and PT/ONNX downloads to signed-in users. It
+does not grant access to private source datasets or the original design editor.
+Changing back to private blocks subsequent requests but cannot retract files
+already downloaded. The Training UI and new weight API do not export JSON;
+Builder JSON import/export and the protected legacy download API are retained.
+Delete Weight is recoverable removal: the row and files are retained, the weight
+disappears from both lists, and shared result access is revoked. Model designs,
+job records, and metric history are untouched. Physical storage reclamation is
+not performed by this action.
+
+Training has separate model, dataset, and parameter sections, paginated searchable
+selectors, a ten-row job list, and an independent My/Public weight library. All
+job history remains searchable; pagination replaces the old default 48-hour
+display cutoff. Selected job IDs persist in the page URL. Graph polling is every
+three seconds while active and thirty seconds when completed; hidden tabs pause
+polling. Unchanged metric arrays retain identity to avoid chart redraws.
+
+Verification: `docker compose exec -T -e WORKER_TEST_POSTGRES=1 backend python -m unittest discover -s tests -v`
+uses disposable PostgreSQL schemas, in-memory API databases and temporary
+synthetic images/exports, never user datasets. Direct-URL tests use mocked HTTP
+responses including a redirect, ZIP extraction, persisted counts and a download
+round trip; they do not depend on any particular third-party hosting service.
