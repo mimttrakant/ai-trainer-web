@@ -23,3 +23,10 @@ Do not publicly share datasets you do not have permission to redistribute.
 fixtures. `frontend/tests/dataset-library.spec.js` mocks API traffic. Neither suite
 publishes, deletes or trains real user content. Existing Dataset tests were
 updated because live backfill on details GET is intentionally no longer allowed.
+
+Model designs remain backed by `projects` / `project_versions`; the UI calls
+them Models and keeps old URLs as aliases. Community models expose version
+metadata and explicit clone actions, not an editor. Clones copy only the selected
+immutable architecture into a new private model with Version 1 and new row IDs.
+Design removal is soft deletion so existing jobs/weights retain provenance.
+Public means all saved versions of the design can be selected, not just latest.

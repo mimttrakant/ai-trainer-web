@@ -26,21 +26,21 @@ function Dashboard() {
           <DashboardCard
             number="01"
             title="Dataset Library"
-            description="Upload ZIP files or import datasets from Google Drive and manage them in your personal library."
+            description="Import ZIP datasets from your device, Google Drive or another URL. Explore community datasets."
             buttonText="Open Dataset"
             linkTo="/datasets"
           />
           <DashboardCard
             number="02"
-            title="Projects"
-            description="Create projects and design neural-network architectures with the visual model builder."
-            buttonText="Open Projects"
-            linkTo="/projects"
+            title="Models"
+            description="Create your own models or clone a saved version from the community."
+            buttonText="Open Models"
+            linkTo="/models"
           />
           <DashboardCard
             number="03"
             title="Training"
-            description="Select a saved project and dataset, configure training settings, and monitor the results."
+            description="Select a model version and dataset, configure training, and share trained weights and results."
             buttonText="Open Training"
             linkTo="/training"
           />

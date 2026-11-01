@@ -16,7 +16,8 @@ from access import issue_session, protect_legacy
 from database import get_db
 import dataset_service
 import library_datasets
-from models import Base, Dataset, Project, User
+import library_models
+from models import Base, Dataset, Project, ProjectVersion, User
 
 
 class LibraryTests(unittest.TestCase):
@@ -27,6 +28,12 @@ class LibraryTests(unittest.TestCase):
         self.sessions = sessionmaker(bind=engine)
         with self.sessions() as db:
             db.add_all([User(id=1, username="alice"), User(id=2, username="bob")])
+            self.graph = json.dumps({"nodes": [{"id": "input", "data": {"layerType": "Input", "properties": {"channels": 3}}}], "edges": []})
+            db.add_all([Project(id=1, owner_id=1, name="Mine", model_name="Mine", version=1, architecture_json=self.graph),
+                        Project(id=2, owner_id=2, name="Shared", model_name="Shared", version=2, visibility="public", architecture_json=self.graph),
+                        Project(id=3, owner_id=2, name="Hidden", model_name="Hidden", version=1, architecture_json=self.graph)])
+            db.add_all([ProjectVersion(project_id=owner_project, owner_id=1 if owner_project == 1 else 2, version=version, model_name=f"Design {version}", architecture_json=self.graph)
+                        for owner_project, version in [(1, 1), (2, 1), (2, 2), (3, 1)]])
             db.add_all([Dataset(id=1, owner_id=1, name="Private fruit", source_type="zip", status="ready", image_count=2, class_count=2,
                                 class_counts_json=json.dumps([{"name": "apple", "image_count": 1, "splits": {}}, {"name": "banana", "image_count": 1, "splits": {}}])),
                         Dataset(id=2, owner_id=2, name="Public fruit", source_type="url", status="ready", visibility="public", class_counts_json="[]")])
@@ -38,6 +45,7 @@ class LibraryTests(unittest.TestCase):
         self.app = FastAPI(dependencies=[Depends(protect_legacy)])
         self.app.dependency_overrides[get_db] = get_test_db
         self.app.include_router(library_datasets.router)
+        self.app.include_router(library_models.router)
         @self.app.get("/datasets/{owner_id}")
         def legacy_list(owner_id: int):
             return {"success": True}
@@ -117,3 +125,36 @@ class LibraryTests(unittest.TestCase):
     def test_logout_revokes_token(self):
         self.assertEqual(self.client.post("/logout", headers=self.headers()).status_code, 200)
         self.assertEqual(self.get("/library/datasets").status_code, 401)
+
+    def test_model_versions_are_newest_first_and_private_models_are_hidden(self):
+        self.assertEqual(self.get("/library/models?scope=public").json()["total"], 1)
+        self.assertEqual([row["version"] for row in self.get("/library/models/2/versions").json()["versions"]], [2, 1])
+        self.assertEqual(self.get("/library/models/3/versions").status_code, 404)
+
+    def test_clone_selected_version_creates_independent_private_version_one(self):
+        result = self.client.post("/library/models/2/clone", json={"version": 1, "name": "My copy"}, headers=self.headers())
+        self.assertEqual(result.status_code, 200)
+        model = result.json()["model"]
+        self.assertEqual((model["version"], model["display_name"], model["visibility"]), (1, "alice/My copy", "private"))
+        with self.sessions() as db:
+            self.assertEqual(db.get(Project, 2).version, 2)
+            revision = db.query(ProjectVersion).filter_by(project_id=model["id"]).one()
+            self.assertEqual((revision.owner_id, revision.version, revision.architecture_json), (1, 1, self.graph))
+        self.assertEqual(self.client.post("/library/models/3/clone", json={"version": 1}, headers=self.headers()).status_code, 404)
+        self.assertEqual(self.client.post("/library/models/2/clone", json={"version": 999}, headers=self.headers()).status_code, 404)
+
+    def test_public_model_cannot_be_deleted_or_republished_by_another_user(self):
+        self.assertEqual(self.client.delete("/library/models/2", headers=self.headers()).status_code, 404)
+        self.assertEqual(self.client.patch("/library/models/2/visibility", json={"visibility": "private"}, headers=self.headers()).status_code, 404)
+        self.assertEqual(self.client.patch("/library/models/2/visibility", json={"visibility": "private"}, headers=self.headers(2)).status_code, 200)
+        self.assertEqual(self.get("/library/models/2/versions").status_code, 404)
+
+    def test_create_and_delete_model_preserve_existing_history(self):
+        created = self.client.post("/library/models", json={"name": "New", "description": "Design"}, headers=self.headers()).json()["model"]
+        self.assertEqual((created["version"], created["owner_id"], created["visibility"]), (0, 1, "private"))
+        self.assertEqual(self.client.patch(f'/library/models/{created["id"]}/visibility', json={"visibility": "public"}, headers=self.headers()).status_code, 409)
+        self.assertEqual(self.client.delete("/library/models/1", headers=self.headers()).status_code, 200)
+        self.assertEqual(self.get("/library/models/1/versions").status_code, 404)
+        with self.sessions() as db:
+            self.assertIsNotNone(db.get(Project, 1).deleted_at)
+            self.assertEqual(db.query(ProjectVersion).filter_by(project_id=1).count(), 1)

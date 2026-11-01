@@ -18,6 +18,8 @@ function Navbar() {
     <nav
       style={{
         display: "flex",
+        flexWrap: "wrap",
+        gap: "12px",
         justifyContent: "space-between",
         alignItems: "center",
         padding: "20px",
@@ -28,16 +30,18 @@ function Navbar() {
         <h2>AI Trainer</h2>
       </Link>
 
-      <div>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", minWidth: 0, overflowWrap: "anywhere" }}>
         <Link to="/" style={{ marginRight: "10px" }}>
           Home
         </Link>
 
         {user ? (
           <>
-            <Link to="/projects" style={{ marginRight: "10px" }}>
-              Projects
+            <Link to="/models" style={{ marginRight: "10px" }}>
+              Models
             </Link>
+            <Link to="/datasets" style={{ marginRight: "10px" }}>Datasets</Link>
+            <Link to="/training" style={{ marginRight: "10px" }}>Training</Link>
 
             <span style={{ marginRight: "10px" }}>
               {user.username}

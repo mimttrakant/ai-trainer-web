@@ -75,6 +75,7 @@ def save_project_version(db, project_id, data):
         raise HTTPException(409, "This project was saved elsewhere. Export your draft before reloading the latest version.")
     project.version += 1
     project.model_name = name
+    project.name = name
     project.architecture_json = data.architecture_json
     revision = ProjectVersion(
         project_id=project.id, owner_id=project.owner_id, version=project.version,

@@ -11,6 +11,8 @@ from auth import hash_password, verify_password
 from access import issue_session, protect_legacy
 from library_migration import migrate_library
 from library_datasets import router as library_dataset_router
+from library_models import router as library_model_router
+from datetime import datetime
 from database import engine, get_db
 from dataset_details import router as dataset_details_router
 from model_routes import router as model_router
@@ -77,6 +79,7 @@ with engine.begin() as connection:
 
 app = FastAPI(dependencies=[Depends(protect_legacy)])
 app.include_router(library_dataset_router)
+app.include_router(library_model_router)
 app.include_router(model_router)
 app.include_router(dataset_details_router)
 app.include_router(project_version_router)
@@ -411,6 +414,7 @@ def get_projects(
     projects = (
         db.query(Project)
         .filter(Project.owner_id == owner_id)
+        .filter(Project.deleted_at.is_(None))
         .all()
     )
 
@@ -469,7 +473,8 @@ def delete_project(
             "message": "Project not found",
         }
 
-    db.delete(project)
+    project.deleted_at = datetime.utcnow()
+    project.visibility = "private"
     db.commit()
 
     return {

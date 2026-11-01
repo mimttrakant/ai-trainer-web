@@ -48,6 +48,8 @@ function BuilderEditor({ id }) {
 
   const [saveStatus, setSaveStatus] = useState("");
   const [modelName, setModelName] = useState("");
+  const [modelDescription, setModelDescription] = useState("");
+  const username = JSON.parse(localStorage.getItem("user") || "null")?.username || "";
   const [version, setVersion] = useState(0);
   const [headVersion, setHeadVersion] = useState(0);
   const [switchingVersion, setSwitchingVersion] = useState(false);
@@ -104,6 +106,7 @@ function BuilderEditor({ id }) {
       const loadedEdges = Array.isArray(architecture.edges) ? architecture.edges : [];
       const name = project.model_name || project.name || "Untitled model";
       setModelName(name);
+      setModelDescription(project.description || "");
       setVersion(project.version || 0);
       setHeadVersion(project.version || 0);
       setNodes(loadedNodes);
@@ -563,14 +566,15 @@ function BuilderEditor({ id }) {
       <Navbar />
 
       <main style={pageStyle}>
-        <Link to="/projects">
-          ← Back to Projects
+        <Link to="/models">
+          ← Back to Models
         </Link>
 
         <div style={headingSectionStyle}>
           <h1 style={{ marginBottom: "12px" }}>
-            Model Builder
+            {username}/{modelName || "Model Builder"}
           </h1>
+          {modelDescription && <p>{modelDescription}</p>}
 
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             <button type="button" disabled={loading || saving} onClick={() => setEditingName((value) => !value)}>Model</button>
