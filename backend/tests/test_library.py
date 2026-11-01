@@ -2,6 +2,7 @@
 import json
 from contextlib import contextmanager
 import httpx
+import torch
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
@@ -65,7 +66,7 @@ class LibraryTests(unittest.TestCase):
         self.addCleanup(self.client.close)
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
+        self.root = Path(temp.name).resolve()
         patcher = patch.object(dataset_service, "STORAGE_ROOT", self.root)
         patcher.start(); self.addCleanup(patcher.stop)
         patcher = patch.object(model_routes, "STORAGE_ROOT", self.root)
@@ -194,7 +195,8 @@ class LibraryTests(unittest.TestCase):
     def complete(self, job_id, visibility="private"):
         folder = self.root / "models/user_1/project_2/version_1"
         folder.mkdir(parents=True, exist_ok=True)
-        pt = folder / "model.pt"; pt.write_bytes(b"synthetic weight")
+        pt = folder / "model-full-v1.pt"
+        torch.save(torch.nn.Sequential(torch.nn.Linear(2, 2)).eval(), pt)
         with self.sessions() as db:
             job = db.get(TrainingJob, job_id); job.status = "completed"
             db.add(TrainingMetric(training_job_id=job_id, epoch=1, train_loss=1.5, val_loss=1.2, train_accuracy=50, val_accuracy=60))
@@ -243,7 +245,9 @@ class LibraryTests(unittest.TestCase):
         self.assertNotIn("architecture_json", result["job"])
         self.assertNotIn("pt_path", result["weights"][0])
         self.assertEqual(result["weights"][0]["display_name"], "alice/Design 1")
-        self.assertEqual(self.get(f"/library/weights/{weight_id}/download/pt", 2).content, b"synthetic weight")
+        download = self.get(f"/library/weights/{weight_id}/download/pt", 2)
+        self.assertIsInstance(torch.load(BytesIO(download.content), weights_only=False), torch.nn.Module)
+        self.assertIn('filename="model.pt"', download.headers["content-disposition"])
         self.assertEqual(self.get("/library/datasets/1/download", 2).status_code, 404)
         self.assertEqual(self.get("/library/weights?scope=public", 2).json()["total"], 1)
         self.client.patch(f"/library/weights/{weight_id}/visibility", json={"visibility": "private"}, headers=self.headers())

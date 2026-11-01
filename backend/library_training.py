@@ -2,7 +2,6 @@
 from datetime import datetime
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -160,4 +159,4 @@ def download_weight(weight_id: int, file_format: Literal["pt", "onnx"], user=Dep
     filename = f"weight-{weight.id}-v{weight.version}"
     if file_format == "onnx":
         return model_routes.onnx_download(path, folder, filename)
-    return FileResponse(path, filename=f"{filename}.pt", media_type="application/octet-stream", headers=model_routes.DOWNLOAD_HEADERS)
+    return model_routes.full_pt_download(weight, path, folder)

@@ -11,6 +11,9 @@ from zipfile import ZipFile
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import onnx
+import torch
+from training.model_builder import build_classification_model
+from training.pt_export import FULL_PT_FILENAME
 from onnx import TensorProto, helper
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,13 +28,18 @@ class ModelRoutesTests(unittest.TestCase):
     def setUp(self):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.folder = self.root / "models/user_2/project_1/version_3"
         self.folder.mkdir(parents=True)
         self.pt = self.folder / "model.pt"
-        self.pt.write_bytes(b"synthetic PT fixture")
         self.onnx = self.folder / "model.onnx"
-        self.graph = {"nodes": [{"id": "input", "data": {"layerType": "Input", "properties": {}}}], "edges": []}
+        self.graph = {"nodes": [
+            {"id": "input", "data": {"layerType": "Input", "properties": {"channels": 3, "width": 8, "height": 8}}},
+            {"id": "flat", "data": {"layerType": "Flatten"}},
+            {"id": "out", "data": {"layerType": "Output"}},
+        ], "edges": [{"source": "input", "target": "flat"}, {"source": "flat", "target": "out"}]}
+        self.original_model = build_classification_model(self.graph, 2).model.eval()
+        torch.save(self.original_model.state_dict(), self.pt)
         graph = helper.make_graph([], "test", [], [])
         onnx.save(helper.make_model(graph), self.onnx)
         patcher = patch.object(model_routes, "STORAGE_ROOT", self.root)
@@ -48,6 +56,7 @@ class ModelRoutesTests(unittest.TestCase):
             db.add(ModelVersion(id=9, owner_id=2, project_id=1, dataset_id=5,
                                 training_job_id=4, name="Model v3", version=3,
                                 project_version=2, architecture_json=json.dumps(self.graph), dataset_name="Original dataset",
+                                class_count=2, class_names_json='["apple", "banana"]',
                                 pt_path=str(self.pt), onnx_path=str(self.onnx)))
             db.commit()
 
@@ -82,12 +91,36 @@ class ModelRoutesTests(unittest.TestCase):
     def test_download_pt_and_self_contained_onnx(self):
         response = self.download()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.content, self.pt.read_bytes())
-        self.assertIn('filename="project-1-model-9-v3.pt"', response.headers["content-disposition"])
+        loaded = torch.load(BytesIO(response.content), map_location="cpu", weights_only=False)
+        self.assertIsInstance(loaded, torch.nn.Module)
+        self.assertEqual(loaded.class_names, ["apple", "banana"])
+        sample = torch.randn(2, 3, 8, 8)
+        with torch.no_grad():
+            torch.testing.assert_close(loaded(sample), self.original_model(sample))
+        self.assertIsInstance(torch.load(self.pt, weights_only=True), dict)
+        self.assertIn('filename="model.pt"', response.headers["content-disposition"])
         response = self.download("onnx")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, self.onnx.read_bytes())
         self.assertIn(".onnx", response.headers["content-disposition"])
+
+    def test_legacy_conversion_cached_and_uses_saved_snapshot_not_project_head(self):
+        with self.session() as db:
+            db.get(Project, 1).architecture_json = "{}"; db.commit()
+        original = self.pt.read_bytes()
+        self.assertEqual(self.download().status_code, 200)
+        self.assertTrue((self.folder / FULL_PT_FILENAME).is_file())
+        with patch("training.pt_export.write_full_model", side_effect=AssertionError("Should reuse cache")):
+            self.assertEqual(self.download().status_code, 200)
+        self.assertEqual(self.pt.read_bytes(), original)
+
+    def test_legacy_export_without_metadata_or_matching_weights_fails_honestly(self):
+        self.change_model(architecture_json="{}")
+        self.assertEqual(self.download().status_code, 409)
+        self.assertFalse((self.folder / FULL_PT_FILENAME).exists())
+        self.change_model(architecture_json=json.dumps(self.graph), class_count=3, class_names_json='[]')
+        self.assertEqual(self.download().status_code, 409)
+        self.assertIsInstance(torch.load(self.pt, weights_only=True), dict)
 
     def test_external_onnx_download_contains_all_weights_and_cleans_temporary_archive(self):
         self.external_graph("weights/part.data")

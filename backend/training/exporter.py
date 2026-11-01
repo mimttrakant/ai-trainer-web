@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from training.pt_export import FULL_PT_FILENAME, write_full_model
 
 
 STORAGE_ROOT = Path("/app/storage")
@@ -53,6 +54,8 @@ def save_model_pt(
     owner_id: int,
     project_id: int,
     version: int,
+    architecture_json: str,
+    class_names: list[str],
 ) -> Path:
     folder = get_model_version_folder(
         owner_id=owner_id,
@@ -62,13 +65,10 @@ def save_model_pt(
 
     output_path = (
         folder
-        / "model.pt"
+        / FULL_PT_FILENAME
     )
 
-    torch.save(
-        model.state_dict(),
-        output_path,
-    )
+    write_full_model(model.state_dict(), architecture_json, class_names, len(class_names), output_path)
 
     return output_path
 
@@ -287,7 +287,7 @@ def export_trained_model(
     Export Model หลัง Train สำเร็จ
 
     ได้:
-    - model.pt
+    - model-full-v1.pt (downloaded as model.pt: full module + trained weights)
     - checkpoint.pt
     - model.onnx
     - metadata.json
@@ -298,6 +298,8 @@ def export_trained_model(
         owner_id=owner_id,
         project_id=project_id,
         version=version,
+        architecture_json=architecture_json,
+        class_names=class_names,
     )
 
     checkpoint_path = (

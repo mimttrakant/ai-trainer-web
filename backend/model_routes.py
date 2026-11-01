@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
 from zipfile import ZIP_STORED, ZipFile
+from threading import Lock
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -19,6 +20,35 @@ from project_versioning import validate_architecture
 router = APIRouter()
 STORAGE_ROOT = Path("/app/storage")
 DOWNLOAD_HEADERS = {"Cache-Control": "private, no-store"}
+PT_EXPORT_LOCK = Lock()
+
+
+def full_pt_download(model, path, folder):
+    from training.pt_export import FULL_PT_FILENAME, write_full_model
+    import torch
+
+    if path.name == FULL_PT_FILENAME:
+        return FileResponse(path, filename="model.pt", media_type="application/octet-stream", headers=DOWNLOAD_HEADERS)
+    target = folder / FULL_PT_FILENAME
+    # Legacy state_dict files remain untouched. Prepare once, reuse on later downloads.
+    with PT_EXPORT_LOCK:
+        if target.exists():
+            target = checked_file(target, folder)
+        else:
+            try:
+                architecture = model.architecture_json
+                validate_architecture(architecture)  # Never use the current project head.
+                class_names = json.loads(model.class_names_json or "[]")
+                count = model.class_count or len(class_names)
+                state = torch.load(path, map_location="cpu", weights_only=True)
+                if not isinstance(state, dict):
+                    raise ValueError("Expected a legacy state_dict.")
+                write_full_model(state, architecture, class_names, count, target)
+            except OSError as exc:
+                raise HTTPException(503, "Cannot prepare model.pt: server storage could not be read or written. Check available disk space and permissions, then retry.") from exc
+            except Exception as exc:
+                raise HTTPException(409, "Cannot prepare the full PT model: saved architecture, class information or weights are missing/incompatible. Original files are unchanged.") from exc
+    return FileResponse(target, filename="model.pt", media_type="application/octet-stream", headers=DOWNLOAD_HEADERS)
 
 
 def owned_model(db, model_id, owner_id, project_id):
@@ -80,7 +110,7 @@ def onnx_download(path, folder, filename):
     files = []
     for location in sorted(locations):
         relative = Path(location)
-        if relative.is_absolute() or ".." in relative.parts or "\\" in location or ":" in location:
+        if relative.is_absolute() or location.startswith("/") or ".." in relative.parts or "\\" in location or ":" in location:
             raise HTTPException(409, "The ONNX model references an unsafe external file.")
         files.append((checked_file(path.parent / relative, folder), relative.as_posix()))
 
@@ -137,7 +167,7 @@ def download_model(
     path = checked_file(stored_path, folder)
     if file_format == "onnx":
         return onnx_download(path, folder, filename)
-    return FileResponse(path, media_type="application/octet-stream", filename=f"{filename}.pt", headers=DOWNLOAD_HEADERS)
+    return full_pt_download(model, path, folder)
 
 
 @router.delete("/training/projects/{project_id}/models/{model_id}")
