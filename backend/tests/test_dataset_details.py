@@ -88,7 +88,7 @@ class DatasetDetailsTests(unittest.TestCase):
             {"name": "apple", "image_count": 4, "splits": {"train": 2, "val": 1, "test": 1}},
             {"name": "banana", "image_count": 3, "splits": {"train": 1, "val": 1, "test": 1}},
         ])
-        self.change(image_count=8, split_type="pre_split")
+        self.change(image_count=8, split_type="pre_split", class_counts_json=json.dumps(result.class_counts))
         data = self.details().json()
         self.assertEqual(data["classified_image_count"], 7)
         self.assertEqual(data["unassigned_image_count"], 1)
@@ -121,15 +121,17 @@ class DatasetDetailsTests(unittest.TestCase):
             self.assertEqual(row.class_count, 2)
             self.assertEqual(sum(item["image_count"] for item in json.loads(row.class_counts_json)), 3)
 
-    def test_legacy_details_backfill_once_and_preserve_existing_metadata(self):
+    def test_legacy_details_require_offline_backfill_and_preserve_existing_metadata(self):
         self.files("apple/a.jpg", "apple/b.jpg", "banana/a.jpg")
         with patch.object(dataset_details, "scan_dataset", wraps=scan_dataset) as scanner:
+            self.assertEqual(self.details().status_code, 409)
+            self.change(class_counts_json=json.dumps(scan_dataset(self.folder).class_counts))
             first = self.details()
             self.assertEqual(first.status_code, 200)
             self.assertEqual(first.json()["detected_class_count"], 2)
             self.assertEqual(first.json()["classified_image_count"], 3)
             self.assertEqual(self.details().json(), first.json())
-            self.assertEqual(scanner.call_count, 1)
+            self.assertEqual(scanner.call_count, 0)
         with self.session() as db:
             row = db.get(Dataset, 7)
             self.assertIsNotNone(row.class_counts_json)
@@ -143,11 +145,11 @@ class DatasetDetailsTests(unittest.TestCase):
                 self.assertEqual(self.details().json()["classes"], rows)
                 scanner.assert_not_called()
 
-    def test_invalid_cached_shape_is_rebuilt(self):
+    def test_invalid_cached_shape_does_not_trigger_live_scan(self):
         self.files("apple/a.jpg", "banana/a.jpg")
         for value in ["broken json", '{}', '[{"name":"apple"}]', '[{"name":"apple","image_count":-1,"splits":{}}]']:
             self.change(class_counts_json=value)
-            self.assertEqual(self.details().json()["detected_class_count"], 2)
+            self.assertEqual(self.details().status_code, 409)
 
     def test_wrong_owner_missing_and_unfinished_datasets_do_not_scan(self):
         with patch.object(dataset_details, "scan_dataset") as scanner:
@@ -161,7 +163,7 @@ class DatasetDetailsTests(unittest.TestCase):
 
     def test_unsupported_dataset_still_has_useful_details(self):
         self.files("loose.jpg")
-        self.change(status="unsupported", supported=False, image_count=1, class_count=0)
+        self.change(status="unsupported", supported=False, image_count=1, class_count=0, class_counts_json="[]")
         result = self.details()
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.json()["classes"], [])
@@ -170,15 +172,15 @@ class DatasetDetailsTests(unittest.TestCase):
     def test_missing_or_redirected_root_is_not_scanned(self):
         self.folder.rmdir()  # Only this test's empty temporary directory.
         self.change(storage_path="/some/arbitrary/directory")
-        self.assertEqual(self.details().status_code, 404)
+        self.assertEqual(self.details().status_code, 409)
         other = self.root / "other_owner_files"
         other.mkdir()
         self.folder.symlink_to(other, target_is_directory=True)
-        self.assertEqual(self.details().status_code, 404)
+        self.assertEqual(self.details().status_code, 409)
 
     def test_scan_failure_does_not_cache_incomplete_counts(self):
         with patch.object(dataset_details, "scan_dataset", side_effect=OSError("temporary failure")):
-            self.assertEqual(self.details().status_code, 503)
+            self.assertEqual(self.details().status_code, 409)
         with self.session() as db:
             self.assertIsNone(db.get(Dataset, 7).class_counts_json)
 

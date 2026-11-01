@@ -1,0 +1,36 @@
+.library-shell { min-height: 100vh; background: #11151e; color: #edf2ff; }
+.library-main { width: min(1180px, calc(100% - 40px)); margin: auto; padding: 36px 0 72px; }
+.library-header, .library-row, .library-actions, .library-pagination, .library-modal header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.library-header { flex-wrap: wrap; margin-bottom: 24px; }
+.library-header h1 { font-size: clamp(30px, 4vw, 48px); margin: 0 0 8px; }
+.library-main p, .library-modal p { color: #aebcd3; line-height: 1.6; }
+.library-main button, .library-modal button, .library-link { padding: 10px 15px; border: 1px solid #485575; border-radius: 9px; color: #ecf0ff; background: #25324c; cursor: pointer; font: inherit; text-decoration: none; }
+.library-main button:disabled, .library-modal button:disabled { opacity: .5; cursor: default; }
+.library-main button:focus-visible, .library-main input:focus-visible, .library-modal input:focus-visible { outline: 2px solid #a1b8ff; outline-offset: 3px; }
+.library-main input, .library-main select, .library-modal input, .library-modal select, .library-modal textarea { box-sizing: border-box; padding: 11px; min-height: 42px; border: 1px solid #495777; border-radius: 8px; background: #141d2d; color: #f3f6ff; font: inherit; min-width: 0; }
+.library-search { display: block; width: 100%; margin-bottom: 16px; }
+.library-tabs { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+.library-tabs button[aria-pressed=true] { background: #6451cb; border-color: #aa9eff; }
+.library-row { border-bottom: 1px solid #303b51; padding: 20px 4px; align-items: flex-start; }
+.library-row h3 { margin: 0 0 6px; font-size: 18px; overflow-wrap: anywhere; }
+.library-row p { margin: 5px 0; overflow-wrap: anywhere; }
+.library-row-info { min-width: 0; flex: 1; }
+.library-actions { justify-content: flex-end; flex-wrap: wrap; }
+.library-pagination { justify-content: center; margin-top: 24px; flex-wrap: wrap; }
+.library-notice { background: #25324c; padding: 14px; border-radius: 10px; margin: 12px 0; overflow-wrap: anywhere; }
+.library-error { color: #ffb6b6 !important; }
+.library-modal { box-sizing: border-box; width: min(640px, calc(100% - 28px)); max-height: 90vh; overflow: auto; border: 1px solid #506080; border-radius: 14px; background: #192234; color: #f0f4ff; padding: 24px; }
+.library-modal::backdrop { background: #050a14cc; }
+.library-modal header { align-items: flex-start; }
+.library-modal h2 { margin: 0 0 20px; }
+.library-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; min-width: 0; }
+.library-name-field { display: flex; align-items: center; gap: 8px; }
+.library-name-field > span { overflow-wrap: anywhere; max-width: 40%; color: #b5c3f4; }
+.library-name-field input { flex: 1; width: 100%; }
+.library-fieldset { border: 1px solid #425371; padding: 18px; margin: 0 0 22px; border-radius: 12px; min-width: 0; }
+.library-fieldset legend { padding: 0 10px; font-weight: 700; }
+.library-parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 16px; }
+.library-selected { padding: 12px; background: #293757; border-radius: 10px; overflow-wrap: anywhere; margin: 12px 0; }
+.library-picker { max-height: 430px; overflow-y: auto; }
+.library-job { width: 100%; text-align: left; }
+@media(max-width: 750px) { .library-row { flex-direction: column; } .library-actions { justify-content: flex-start; } .library-main { width: calc(100% - 24px); } }

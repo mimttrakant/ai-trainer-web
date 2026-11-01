@@ -35,6 +35,8 @@ class Project(Base):
     architecture_json = Column(String, default="{}")
     model_name = Column(String, nullable=True)
     version = Column(Integer, nullable=False, default=0)
+    visibility = Column(String, nullable=False, default="private")
+    deleted_at = Column(DateTime, nullable=True)
 
 
 class ProjectVersion(Base):
@@ -66,6 +68,8 @@ class Dataset(Base):
 
     name = Column(String, nullable=False)
     description = Column(Text, default="")
+    visibility = Column(String, nullable=False, default="private")
+    url_provider = Column(String, nullable=True)
 
     source_type = Column(String, nullable=False)
     source_url = Column(Text, nullable=True)
@@ -103,6 +107,8 @@ class TrainingJob(Base):
     project_id = Column(Integer, nullable=False, index=True)
     dataset_id = Column(Integer, nullable=False, index=True)
     dataset_name = Column(String, nullable=True)
+    source_project_owner_id = Column(Integer, nullable=True)
+    source_dataset_owner_id = Column(Integer, nullable=True)
 
     # new / continue / finetune
     mode = Column(String, default="new")
@@ -229,3 +235,10 @@ class TrainingMetric(Base):
         DateTime,
         default=datetime.utcnow,
     )
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    token_hash = Column(String, primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)

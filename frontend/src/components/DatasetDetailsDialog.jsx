@@ -3,7 +3,7 @@ import "./DatasetLibrary.css";
 
 const PAGE_SIZE = 10;
 
-export default function DatasetDetailsDialog({ dataset, ownerId, apiUrl, onClose }) {
+export default function DatasetDetailsDialog({ dataset, ownerId, apiUrl, onClose, detailsPath }) {
   const dialog = useRef(null);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -27,7 +27,7 @@ export default function DatasetDetailsDialog({ dataset, ownerId, apiUrl, onClose
     let disposed = false;
     const load = async () => {
       try {
-        const response = await fetch(`${apiUrl}/datasets/${dataset.id}/details?owner_id=${ownerId}`, {
+        const response = await fetch(`${apiUrl}${detailsPath || `/datasets/${dataset.id}/details?owner_id=${ownerId}`}`, {
           signal: controller.signal, cache: "no-store",
         });
         const result = await response.json();
@@ -45,7 +45,7 @@ export default function DatasetDetailsDialog({ dataset, ownerId, apiUrl, onClose
     // Defer starting I/O so StrictMode's setup/cleanup probe cannot double-scan.
     const start = setTimeout(load, 0);
     return () => { disposed = true; clearTimeout(start); clearTimeout(timeout); controller.abort(); };
-  }, [apiUrl, dataset.id, dataset.status, ownerId, processing, retry]);
+  }, [apiUrl, dataset.id, dataset.status, detailsPath, ownerId, processing, retry]);
 
   const classes = useMemo(() => (data?.classes || []).filter(row => row.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [data, query]);
   const pages = Math.max(1, Math.ceil(classes.length / PAGE_SIZE));
@@ -68,7 +68,7 @@ export default function DatasetDetailsDialog({ dataset, ownerId, apiUrl, onClose
         {dataset.unsupported_reason && <p className="dataset-details__error">{dataset.unsupported_reason}</p>}
         {processing ? <p role="status">กำลังนำเข้าและสแกน Dataset รอให้เสร็จก่อนดูจำนวนภาพรายคลาส</p>
           : dataset.status === "failed" ? <p role="alert">นำเข้าไม่สำเร็จ: {dataset.error_message || "ไม่สามารถนับภาพรายคลาสได้"}</p>
-            : loading ? <p role="status">กำลังโหลดรายละเอียด… Dataset เก่าอาจต้องนับภาพในครั้งแรก</p>
+            : loading ? <p role="status">กำลังโหลดสถิติที่บันทึกไว้ในฐานข้อมูล…</p>
               : error ? <div role="alert"><p>{error}</p><button type="button" onClick={() => { setError(""); setLoading(true); setRetry(value => value + 1); }}>ลองโหลดใหม่</button></div>
                 : <>
                   <div className="dataset-details__totals">

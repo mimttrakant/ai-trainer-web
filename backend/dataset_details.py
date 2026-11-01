@@ -41,24 +41,7 @@ def dataset_details(dataset_id: int, owner_id: int, db: Session = Depends(get_db
 
     counts = cached_counts(dataset.class_counts_json)
     if counts is None:
-        # Serialize the first backfill for this dataset, not every Library GET.
-        dataset = db.query(Dataset).filter_by(id=dataset_id, owner_id=owner_id).with_for_update().populate_existing().first()
-        if dataset is None:
-            raise HTTPException(404, "Dataset not found or access denied.")
-        if dataset.status in {"uploading", "processing", "failed"}:
-            raise HTTPException(409, "Dataset is not available for class counting yet.")
-        counts = cached_counts(dataset.class_counts_json)
-        if counts is None:
-            # Construct the owned directory; never scan an arbitrary DB path.
-            folder = get_dataset_folder(owner_id, dataset_id) / "files"
-            if folder.resolve() != folder.absolute() or not folder.is_dir():
-                raise HTTPException(404, "Dataset files are unavailable. Per-class counts could not be calculated.")
-            try:
-                counts = scan_dataset(folder).class_counts
-            except OSError as exc:
-                raise HTTPException(503, "Unable to read dataset files. Please try again.") from exc
-            dataset.class_counts_json = json.dumps(counts, ensure_ascii=False)
-            db.commit()
+        raise HTTPException(409, "Legacy statistics not prepared. Ask the administrator to run python -m backfill_dataset_counts.")
     classified = sum(row["image_count"] for row in counts)
     return {
         "success": True, "dataset_id": dataset.id, "classes": counts,

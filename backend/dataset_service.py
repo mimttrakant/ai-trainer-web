@@ -2,8 +2,11 @@ import json
 import re
 import shutil
 import zipfile
+import ipaddress
+import socket
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urljoin
+from fastapi import HTTPException
 
 import gdown
 import httpx
@@ -128,18 +131,38 @@ def download_google_drive_file(
 
 
 def download_direct_url(url: str, destination: Path) -> None:
-    with httpx.stream(
-        "GET",
-        url,
-        follow_redirects=True,
-        timeout=None,
-    ) as response:
-        response.raise_for_status()
+    for _ in range(6):
+        validate_source_url(url)
+        with httpx.stream("GET", url, follow_redirects=False, timeout=60, trust_env=False) as response:
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    raise ValueError("Download redirect is missing its location.")
+                url = urljoin(url, location)
+                continue
+            response.raise_for_status()
+            with destination.open("wb") as output:
+                for chunk in response.iter_bytes(CHUNK_SIZE):
+                    if chunk:
+                        output.write(chunk)
+            return
+    raise ValueError("Too many redirects in dataset URL.")
 
-        with destination.open("wb") as output:
-            for chunk in response.iter_bytes(CHUNK_SIZE):
-                if chunk:
-                    output.write(chunk)
+
+def validate_source_url(url: str, provider: str | None = None):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(422, "Use a public HTTP(S) ZIP link without embedded credentials.")
+    if provider == "google_drive" and not is_google_drive_url(url):
+        raise HTTPException(422, "Select Other URL for links outside Google Drive.")
+    if is_google_drive_folder_url(url) and is_google_drive_url(url):
+        raise HTTPException(422, "Use a Google Drive ZIP file link, not a folder link.")
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        if not addresses or any(not ipaddress.ip_address(row[4][0]).is_global for row in addresses):
+            raise ValueError("private address")
+    except (OSError, ValueError):
+        raise HTTPException(422, "The URL must resolve to a public internet address, not localhost or a private network.")
 
 
 def apply_scan_result(dataset: Dataset, extract_path: Path) -> None:

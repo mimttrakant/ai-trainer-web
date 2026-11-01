@@ -1,4 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from typing import Literal
 
 
 class UserRegister(BaseModel):
@@ -30,6 +31,7 @@ class DatasetUrlCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     description: str = Field(default="", max_length=1000)
     source_url: HttpUrl
+    provider: Literal["google_drive", "other"] = "other"
 
 
 class TrainingJobCreate(BaseModel):

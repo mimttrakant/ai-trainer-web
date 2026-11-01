@@ -2,12 +2,15 @@ import json
 import shutil
 import zipfile
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from auth import hash_password, verify_password
+from access import issue_session, protect_legacy
+from library_migration import migrate_library
+from library_datasets import router as library_dataset_router
 from database import engine, get_db
 from dataset_details import router as dataset_details_router
 from model_routes import router as model_router
@@ -19,6 +22,7 @@ from dataset_service import (
     process_url_dataset,
     remove_dataset_folder,
     safe_extract_zip,
+    validate_source_url,
 )
 from models import (
     Base,
@@ -41,6 +45,7 @@ from schemas import (
 
 Base.metadata.create_all(bind=engine)
 migrate_project_versions(engine)
+migrate_library(engine)
 
 
 def ensure_dataset_scanner_columns() -> None:
@@ -70,14 +75,15 @@ ensure_dataset_scanner_columns()
 with engine.begin() as connection:
     connection.execute(text("ALTER TABLE model_versions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
 
-app = FastAPI()
+app = FastAPI(dependencies=[Depends(protect_legacy)])
+app.include_router(library_dataset_router)
 app.include_router(model_router)
 app.include_router(dataset_details_router)
 app.include_router(project_version_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -353,6 +359,7 @@ def login(
     return {
         "success": True,
         "message": "Login success",
+        "access_token": issue_session(db, db_user.id),
         "user": {
             "id": db_user.id,
             "username": db_user.username,
@@ -587,6 +594,7 @@ def create_dataset_from_url(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    validate_source_url(str(data.source_url), data.provider)
     owner = (
         db.query(User)
         .filter(User.id == data.owner_id)
@@ -605,6 +613,7 @@ def create_dataset_from_url(
         description=data.description.strip(),
         source_type="url",
         source_url=str(data.source_url),
+        url_provider=data.provider,
         status="processing",
     )
 
@@ -688,6 +697,10 @@ def delete_dataset(
             "success": False,
             "message": "Dataset not found or access denied",
         }
+
+    if db.query(TrainingJob.id).filter(TrainingJob.dataset_id == dataset_id,
+                                      TrainingJob.status.in_(["queued", "training"])).first():
+        raise HTTPException(409, "This dataset is used by a queued/running job. Wait until it finishes.")
 
     storage_path = (
         dataset.storage_path
