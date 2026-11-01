@@ -566,8 +566,8 @@ function BuilderEditor({ id }) {
       <Navbar />
 
       <main style={pageStyle}>
-        <Link to="/models">
-          ← Back to Models
+        <Link to="/models" className="builder-back-link">
+          <span aria-hidden="true">←</span> Back to Models
         </Link>
 
         <div style={headingSectionStyle}>

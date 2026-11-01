@@ -1,0 +1,76 @@
+.app-navbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 14px 24px;
+  border-bottom: 1px solid #303646;
+  background: #171b25;
+}
+.app-navbar__brand {
+  color: #f3f5ff;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.4px;
+  text-decoration: none;
+  white-space: nowrap;
+  margin-right: 12px;
+}
+.app-navbar__links, .app-navbar__account {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.app-navbar__account { margin-left: auto; gap: 12px; }
+.app-navbar__link, .app-navbar__logout, .builder-back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #c9d0e2;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.app-navbar__link:hover { background: #252c3d; color: #fff; }
+.app-navbar__link[aria-current="page"] {
+  color: #e5dfff;
+  border-color: #65558e;
+  background: #342d4c;
+}
+.app-navbar__username {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #aeb8ce;
+  font-size: 13px;
+}
+.app-navbar__logout { border-color: #59404a; color: #edc8ce; background: #2c222b; }
+.app-navbar__logout:hover { border-color: #956574; background: #40303b; }
+.builder-back-link { gap: 8px; border-color: #414a60; background: #222938; color: #e0e6f6; }
+.builder-back-link:hover { background: #2e374b; border-color: #7f8eaf; }
+.app-navbar a:focus-visible, .app-navbar button:focus-visible, .builder-back-link:focus-visible {
+  outline: 2px solid #b5a5ff;
+  outline-offset: 3px;
+}
+@media (max-width: 760px) {
+  .app-navbar { gap: 12px; padding: 12px; }
+  .app-navbar__brand { font-size: 18px; margin-right: 0; }
+  .app-navbar__account { max-width: 55%; gap: 8px; }
+  .app-navbar__logout { flex-shrink: 0; padding-inline: 10px; }
+  .app-navbar__links { order: 2; width: 100%; gap: 4px; }
+  .app-navbar__link { flex: 1; padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-navbar__link, .app-navbar__logout, .builder-back-link { transition: none; }
+}
