@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -18,12 +19,26 @@ import ReactFlow, {
 } from "reactflow";
 
 import "reactflow/dist/style.css";
+import "./BuilderPage.css";
 import Navbar from "../components/Navbar";
 import layerTemplates from "../layers";
 import { createBuilderExport, MAX_BUILDER_FILE_BYTES, parseBuilderJson } from "../utils/builderJson";
 import { useEditorPresence, useProjectVersions } from "../utils/useProjectVersions";
 
 const API_URL = "http://127.0.0.1:8000";
+
+// Presentation only: saved architecture and training parameters stay independent of colors.
+function layerColors(type = "") {
+  if (type === "Input") return { background: "#dbeafe", color: "#1e3a8a", borderColor: "#60a5fa" };
+  if (type === "Output") return { background: "#dcfce7", color: "#14532d", borderColor: "#4ade80" };
+  if (type.startsWith("Conv")) return { background: "#ede9fe", color: "#4c1d95", borderColor: "#a78bfa" };
+  if (type.includes("Pool")) return { background: "#cffafe", color: "#164e63", borderColor: "#22d3ee" };
+  if (type.includes("Norm")) return { background: "#e0e7ff", color: "#312e81", borderColor: "#818cf8" };
+  if (type === "Flatten") return { background: "#fef3c7", color: "#78350f", borderColor: "#fbbf24" };
+  if (type === "Dense") return { background: "#fce7f3", color: "#831843", borderColor: "#f472b6" };
+  if (type === "Dropout") return { background: "#ffedd5", color: "#7c2d12", borderColor: "#fb923c" };
+  return { background: "#e2e8f0", color: "#1e293b", borderColor: "#94a3b8" };
+}
 
 function BuilderPage() {
   const { id } = useParams();
@@ -42,6 +57,12 @@ function BuilderEditor({ id }) {
 
   const [edges, setEdges, onEdgesChange] =
     useEdgesState([]);
+
+  const displayNodes = useMemo(() => nodes.map(node => ({
+    ...node,
+    className: "builder-layer-node",
+    style: { ...layerColors(node.data?.layerType), borderWidth: 2, borderRadius: 8, fontWeight: 600 },
+  })), [nodes]);
 
   const [selectedNodeId, setSelectedNodeId] =
     useState(null);
@@ -659,7 +680,8 @@ function BuilderEditor({ id }) {
                 key={layer.type}
                 disabled={loading || saving || switchingVersion}
                 onClick={() => addLayer(layer)}
-                style={layerButtonStyle}
+                className="builder-layer-button"
+                style={{ ...layerButtonStyle, ...layerColors(layer.type), borderStyle: "solid", borderWidth: 1, borderRadius: 8 }}
               >
                 + {layer.type}
               </button>
@@ -674,7 +696,7 @@ function BuilderEditor({ id }) {
             <ReactFlow
               nodesDraggable={!switchingVersion}
               nodesConnectable={!switchingVersion}
-              nodes={nodes}
+              nodes={displayNodes}
               edges={edges}
               onInit={setReactFlowInstance}
               onNodesChange={(changes) => {
@@ -694,7 +716,7 @@ function BuilderEditor({ id }) {
               ]}
               fitView
             >
-              <MiniMap />
+              <MiniMap nodeColor={node => layerColors(node.data?.layerType).background} />
 
               <Controls />
 

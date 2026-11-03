@@ -1,0 +1,25 @@
+.react-flow__node.builder-layer-node.selected,
+.react-flow__node.builder-layer-node:focus-visible {
+  outline: 2px solid #f8fafc;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px #334155;
+}
+
+.builder-layer-node .react-flow__handle {
+  background: #334155;
+  border: 1px solid #f8fafc;
+}
+
+.builder-layer-button:not(:disabled):hover {
+  filter: brightness(0.94);
+}
+
+.builder-layer-button:focus-visible {
+  outline: 2px solid #f8fafc;
+  outline-offset: 2px;
+}
+
+.builder-layer-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
