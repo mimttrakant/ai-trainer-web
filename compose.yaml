@@ -11,14 +11,21 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_trainer"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   backend:
+    image: ai-trainer-backend:local
     build:
       context: ./backend
     container_name: ai_trainer_backend
     restart: unless-stopped
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/ai_trainer
       WATCHFILES_FORCE_POLLING: "true"
@@ -28,6 +35,31 @@ services:
       - ./backend:/app
       - ./storage:/app/storage
     command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 30s
+
+  worker:
+    image: ai-trainer-backend:local
+    build:
+      context: ./backend
+    container_name: ai_trainer_worker
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/ai_trainer
+      PYTHONUNBUFFERED: "1"
+      TRAINING_WORKER_THREADS: "1"
+    volumes:
+      - ./backend:/app
+      - ./storage:/app/storage
+    command: python -m training.worker
+    stop_grace_period: 1m
 
   frontend:
     build:
@@ -35,7 +67,8 @@ services:
     container_name: ai_trainer_frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "5173:5173"
     volumes:

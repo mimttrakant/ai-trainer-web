@@ -1,5 +1,13 @@
 # Training worker
 
+`docker compose up -d` starts the `worker` service automatically, after the API is
+healthy. View its output with `docker compose logs -f worker`. Configure its
+concurrency using `TRAINING_WORKER_THREADS` in [compose.yaml](../../compose.yaml),
+then run `docker compose up -d worker` to apply changes.
+
+The commands below start an additional foreground worker. Stop the automatic
+worker first with `docker compose stop worker` if you only want one worker process.
+
 From the repository root on Windows:
 
 ```powershell
