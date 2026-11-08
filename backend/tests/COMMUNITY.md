@@ -47,10 +47,28 @@ does not grant access to private source datasets or the original design editor.
 Changing back to private blocks subsequent requests but cannot retract files
 already downloaded. The Training UI and new weight API do not export JSON;
 Builder JSON import/export and the protected legacy download API are retained.
-Delete Weight is recoverable removal: the row and files are retained, the weight
-disappears from both lists, and shared result access is revoked. Model designs,
-job records, and metric history are untouched. Physical storage reclamation is
-not performed by this action.
+The Training UI uses **Delete Job** (`DELETE /library/jobs/{id}`). After owner
+verification it permanently deletes the job, its epoch metrics and all associated
+weight rows, including previously soft-deleted rows, in one transaction. Model
+designs, their revisions, datasets and unrelated jobs remain. Exported files remain
+on disk; this action does not reclaim physical storage. The project stores a
+monotonic export version so later training cannot overwrite retained files.
+Deletion takes the same project lock as export and a job-row lock. A currently
+training job or a weight referenced by another job cannot be deleted. Queued jobs
+can be removed before a worker claims them. The legacy weight deletion API remains
+recoverable for older clients; the current UI does not call it.
+
+The **×** on a job card and **Delete log** only hide logs. Preferences live in
+localStorage per account and browser; the list API applies those filters before
+pagination without modifying database rows. Clear-all captures the newest job ID
+across all pages/searches, so later jobs still appear. Hidden jobs remain accessible
+from saved results or their direct URL. Refresh/reload does not undo hiding.
+
+**Export CSV** downloads saved metrics from `/library/jobs/{id}/download/csv` in
+epoch order with exactly `epoch,train_loss,val_loss,train_accuracy,val_accuracy`.
+Numeric values are unchanged, missing values are blank, and the result-page
+permissions apply to CSV too. Jobs without completed epochs have a header-only
+CSV at the API; the UI disables export until at least one epoch is saved.
 
 Training has separate model, dataset, and parameter sections, paginated searchable
 selectors, a ten-row job list, and an independent My/Public weight library. All

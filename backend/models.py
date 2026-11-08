@@ -35,6 +35,8 @@ class Project(Base):
     architecture_json = Column(String, default="{}")
     model_name = Column(String, nullable=True)
     version = Column(Integer, nullable=False, default=0)
+    # Monotonic export version even after jobs and weight rows are deleted.
+    weight_version = Column(Integer, nullable=False, default=0)
     visibility = Column(String, nullable=False, default="private")
     deleted_at = Column(DateTime, nullable=True)
 

@@ -1,9 +1,12 @@
 """Train immutable own/public designs; weights belong to the submitting user."""
 from datetime import datetime
+import csv
+from io import StringIO
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from access import current_user
@@ -11,7 +14,7 @@ from database import get_db
 from library_datasets import VisibilityUpdate, visible_dataset
 from library_models import visible_model
 import model_routes
-from models import Dataset, ModelVersion, ProjectVersion, TrainingJob, TrainingMetric, User
+from models import Dataset, ModelVersion, Project, ProjectVersion, TrainingJob, TrainingMetric, User
 from project_versioning import validate_architecture
 
 router = APIRouter()
@@ -82,8 +85,15 @@ def start_training(body: StartTraining, user=Depends(current_user), db: Session 
 
 @router.get("/library/jobs")
 def list_jobs(scope: str = "mine", q: str = Query("", max_length=150), page: int = Query(1, ge=1),
-              page_size: int = Query(10, ge=1, le=10), user=Depends(current_user), db: Session = Depends(get_db)):
+              page_size: int = Query(10, ge=1, le=10), hidden_ids: str = Query("", max_length=10000),
+              hidden_through: int = Query(0, ge=0), user=Depends(current_user), db: Session = Depends(get_db)):
     query = db.query(TrainingJob).filter_by(owner_id=user.id)
+    if hidden_ids:
+        values = hidden_ids.split(",")
+        if any(not value.isascii() or not value.isdecimal() or len(value) > 10 for value in values):
+            raise HTTPException(422, "Hidden job IDs must be comma-separated positive integers.")
+        query = query.filter(TrainingJob.id.notin_([int(value) for value in values]))
+    query = query.filter(TrainingJob.id > hidden_through)
     if q.strip():
         number = q.strip().lower().removeprefix("job").strip().removeprefix("#").strip()
         conditions = [TrainingJob.model_name.icontains(q.strip(), autoescape=True),
@@ -128,6 +138,46 @@ def list_weights(scope: Literal["mine", "public"] = "mine", q: str = Query("", m
     total = query.count()
     rows = query.order_by(ModelVersion.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"success": True, "total": total, "items": [weight_summary(row, name, user.id) for row, name in rows]}
+
+
+@router.get("/library/jobs/{job_id}/download/csv")
+def download_job_csv(job_id: int, user=Depends(current_user), db: Session = Depends(get_db)):
+    # Match result-page permissions, including immediate revocation of public access.
+    result = job_details(job_id, user, db)
+    output = StringIO(newline="")
+    fields = ["epoch", "train_loss", "val_loss", "train_accuracy", "val_accuracy"]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(result["metrics"])
+    return Response(output.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="job-{job_id}-metrics.csv"',
+        "Cache-Control": "no-store",
+    })
+
+
+@router.delete("/library/jobs/{job_id}")
+def delete_job(job_id: int, user=Depends(current_user), db: Session = Depends(get_db)):
+    job = db.query(TrainingJob).filter_by(id=job_id, owner_id=user.id).first()
+    if job is None:
+        raise HTTPException(404, "Job not found or access denied.")
+    # Use the same project-first lock order as the worker's export transaction.
+    project = db.query(Project).filter_by(id=job.project_id).with_for_update().populate_existing().first()
+    job = db.query(TrainingJob).filter_by(id=job_id, owner_id=user.id).with_for_update().populate_existing().first()
+    if job is None:
+        raise HTTPException(404, "Job not found or access denied.")
+    if job.status == "training":
+        raise HTTPException(409, "Wait for training to finish before deleting this job. You can hide its log now.")
+    weights = db.query(ModelVersion.id).filter_by(training_job_id=job_id)
+    if db.query(TrainingJob.id).filter(TrainingJob.id != job_id, TrainingJob.source_model_version_id.in_(weights)).first():
+        raise HTTPException(409, "Another job references these weights. Delete that dependent job first.")
+    if project is not None:
+        highest = db.query(func.max(ModelVersion.version)).filter_by(project_id=project.id).scalar() or 0
+        project.weight_version = max(project.weight_version, highest)
+    db.query(TrainingMetric).filter_by(training_job_id=job_id).delete(synchronize_session=False)
+    db.query(ModelVersion).filter_by(training_job_id=job_id).delete(synchronize_session=False)
+    db.delete(job)
+    db.commit()
+    return {"success": True, "message": "Job, epoch metrics and weight records deleted. Exported files remain on disk."}
 
 
 @router.patch("/library/weights/{weight_id}/visibility")
