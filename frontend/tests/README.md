@@ -15,9 +15,12 @@ Set `PLAYWRIGHT_CHANNEL` to another installed browser channel if needed.
   DOM on unchanged epochs, final completion, transient errors, revoked access,
   job switching, exact-version submission, new-job selection, model/version reset,
   bounded searchable pagination and mobile layout.
-- `trained-models.spec.js`: PT/ONNX download, no Training JSON action, Delete Weight
-  confirmation/cancellation, history retention, public result access, owner-only
+- `trained-models.spec.js`: PT/ONNX download, no Training JSON action, Delete Job
+  confirmation/cancellation, selected-result cleanup, public result access, owner-only
   controls, failures, disabled formats, concurrent-action guards and mobile layout.
+- `training-logs.spec.js`: per-account browser log hiding, pagination after hiding,
+  clearing all pages despite search, persistence across reload, new jobs after
+  clearing, CSV contents/errors, and deletion of failed jobs without weights.
 
 The new job list displays ten results per page; all history is searchable instead
 of the old 48-hour cutoff. Graphs poll at 3 seconds active / 30 seconds completed.

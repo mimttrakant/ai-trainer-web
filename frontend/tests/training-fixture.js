@@ -10,6 +10,14 @@ export async function setupTraining(page, state = {}) {
     const url = new URL(route.request().url()); const path = url.pathname; const method = route.request().method();
     expect(route.request().headers().authorization).toBe("Bearer test-token");
     const ok = payload => route.fulfill({ json: { success: true, ...payload } });
+    if (path.match(/\/jobs\/\d+\/download\/csv$/)) {
+      state.downloads.push(path);
+      if (state.failCsv) return route.fulfill({ status: 503, json: { detail: "CSV export failed. Retry." } });
+      const id = Number(path.split("/")[3]);
+      const fields = ["epoch", "train_loss", "val_loss", "train_accuracy", "val_accuracy"];
+      return route.fulfill({ contentType: "text/csv", headers: { "Content-Disposition": `attachment; filename="job-${id}-metrics.csv"` },
+        body: [fields.join(","), ...(state.metrics[id] || []).map(row => fields.map(key => row[key] ?? "").join(","))].join("\r\n") + "\r\n" });
+    }
     if (path.includes("/download/")) {
       state.downloads.push(path); if (state.downloadDelay) await new Promise(resolve => setTimeout(resolve, state.downloadDelay));
       if (state.failDownload) return route.fulfill({ status: 404, json: { detail: "Weight file is missing." } });
@@ -21,8 +29,11 @@ export async function setupTraining(page, state = {}) {
     }
     if (method === "DELETE") {
       state.deletes += 1;
-      if (state.failDelete) return route.fulfill({ status: 503, json: { detail: "Unable to delete weight. Retry." } });
-      state.weights = state.weights.filter(w => w.id !== Number(path.split("/").pop())); return ok({});
+      expect(path).toMatch(/^\/library\/jobs\/\d+$/);
+      if (state.failDelete) return route.fulfill({ status: 503, json: { detail: "Unable to delete job. Retry." } });
+      const id = Number(path.split("/").pop());
+      state.weights = state.weights.filter(w => w.training_job_id !== id);
+      state.jobs = state.jobs.filter(j => j.id !== id); delete state.metrics[id]; return ok({});
     }
     if (path === "/library/jobs" && method === "POST") {
       state.submits.push(route.request().postDataJSON());
@@ -35,6 +46,7 @@ export async function setupTraining(page, state = {}) {
       if (state.detailDelay?.[id]) await new Promise(resolve => setTimeout(resolve, state.detailDelay[id]));
       if (state.revoked) return route.fulfill({ status: 404, json: { detail: "Training result is private or unavailable." } });
       if (state.failDetails) return route.fulfill({ status: 503, json: { detail: "Temporary network failure." } });
+      if (!state.jobs.some(j => j.id === id)) return route.fulfill({ status: 404, json: { detail: "Training result is private or unavailable." } });
       return ok({ job: state.jobs.find(j => j.id === id), metrics: state.metrics[id] || [], weights: state.weights.filter(w => w.training_job_id === id) });
     }
     if (path.endsWith("/versions")) {
@@ -47,8 +59,14 @@ export async function setupTraining(page, state = {}) {
       : path === "/library/datasets" ? [{ id: 1, display_name: "alice/Fruit", class_count: 2, image_count: 20 }] : [];
     if (state.manyModels && path === "/library/models") items = Array.from({ length: 23 }, (_, i) => ({ id: i + 1, display_name: `alice/Model ${i + 1}`, version: 2 }));
     const q = url.searchParams.get("q")?.toLowerCase(); if (q) items = items.filter(row => JSON.stringify(row).toLowerCase().includes(q));
-    const total = items.length; const start = (Number(url.searchParams.get("page") || 1) - 1) * 10;
-    return ok({ items: items.slice(start, start + 10), total });
+    if (path === "/library/jobs") {
+      const hidden = (url.searchParams.get("hidden_ids") || "").split(",").map(Number);
+      const through = Number(url.searchParams.get("hidden_through") || 0);
+      items = items.filter(row => row.id > through && !hidden.includes(row.id)).sort((a, b) => b.id - a.id);
+    }
+    const total = items.length; const size = Number(url.searchParams.get("page_size") || 10);
+    const start = (Number(url.searchParams.get("page") || 1) - 1) * size;
+    return ok({ items: items.slice(start, start + size), total });
   });
   return state;
 }

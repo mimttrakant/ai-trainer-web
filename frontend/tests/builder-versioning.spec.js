@@ -106,7 +106,7 @@ test("does not increment for renaming until Save and rejects a blank name", asyn
 const exampleGraph = () => ({
   nodes: [
     { id: "input", type: "default", position: { x: 10, y: 20 }, data: { label: "Input", layerType: "Input", properties: { channels: 3, width: 32, height: 32 } } },
-    { id: "output", type: "default", position: { x: 10, y: 180 }, data: { label: "Output", layerType: "Output", properties: { classes: 2, activation: "softmax" } } },
+    { id: "output", type: "default", position: { x: 10, y: 180 }, data: { label: "Output", layerType: "Output", properties: {} } },
   ],
   edges: [{ id: "input-output", source: "input", target: "output" }],
 });
@@ -118,7 +118,9 @@ const uploadJson = (page, data) => page.getByLabel("Import Builder JSON", { exac
 test("exports the current draft and imports it into a new project with its own version sequence", async ({ page }) => {
   const state = await setup(page);
   state.project.version = 3;
-  state.project.architecture_json = JSON.stringify(exampleGraph());
+  const legacyGraph = exampleGraph();
+  legacyGraph.nodes[1].data.properties = { classes: 2, activation: "softmax" };
+  state.project.architecture_json = JSON.stringify(legacyGraph);
   await page.goto("/projects/1/builder");
   await page.getByRole("button", { name: "Model", exact: true }).click();
   await page.getByRole("textbox", { name: "Model name" }).fill("Portable classifier");

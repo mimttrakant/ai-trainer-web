@@ -6,10 +6,15 @@ import { MetricChart } from "../components/TrainingCharts";
 import { VersionSelect } from "./ModelsPage";
 import { api, download, getUser } from "../utils/api";
 import { reuseUnchangedList } from "../utils/trainingData";
+import { useHiddenTrainingLogs } from "../utils/useHiddenTrainingLogs";
 import "./TrainingWorkspace.css";
 
 export default function TrainingWorkspace() {
   const user = getUser();
+  return <TrainingWorkspaceContent key={user?.id || "guest"} user={user} />;
+}
+
+function TrainingWorkspaceContent({ user }) {
   const [params, setParams] = useSearchParams();
   const selectedJob = params.get("job");
   const [model, setModel] = useState(null); const [version, setVersion] = useState("");
@@ -19,10 +24,27 @@ export default function TrainingWorkspace() {
   const [refresh, setRefresh] = useState(0);
   const [jobQuery, setJobQuery] = useState(""); const [jobPage, setJobPage] = useState(1);
   const [weightQuery, setWeightQuery] = useState(""); const [weightPage, setWeightPage] = useState(1); const [weightScope, setWeightScope] = useState("mine");
-  const jobs = useLibrary("jobs", "mine", jobQuery, jobPage, "", refresh);
+  const hiddenLogs = useHiddenTrainingLogs(user?.id);
+  const [clearing, setClearing] = useState(false);
+  const jobs = useLibrary("jobs", "mine", jobQuery, jobPage, hiddenLogs.extra, refresh);
   const weights = useLibrary("weights", weightScope, weightQuery, weightPage, "", refresh);
   const reload = () => setRefresh(n => n + 1);
   function selectJob(id) { setParams(previous => { const next = new URLSearchParams(previous); next.set("job", id); return next; }, { replace: true }); }
+  function closeJob() { setParams(previous => { const next = new URLSearchParams(previous); next.delete("job"); return next; }, { replace: true }); }
+  function deletedJob(id) { if (String(id) === selectedJob) closeJob(); reload(); }
+  function hideJob(id) {
+    try { hiddenLogs.hide(id); if (String(id) === selectedJob) closeJob(); }
+    catch (error) { setMessage(error.message); }
+  }
+  async function clearLogs() {
+    if (clearing || !confirm("Hide all current job logs in this browser? Database records, results and weights will stay available.")) return;
+    setClearing(true);
+    try {
+      const latest = await api("/library/jobs?scope=mine&page=1&page_size=1");
+      hiddenLogs.clear(latest.items[0]?.id || 0); closeJob(); setJobPage(1);
+      setMessage("Logs hidden in this browser. Saved jobs and results are still available.");
+    } catch (error) { setMessage(error.message); } finally { setClearing(false); }
+  }
   async function train(event) {
     event.preventDefault(); if (busy || !model || !version || !dataset) return;
     setBusy(true); setMessage("");
@@ -59,23 +81,25 @@ export default function TrainingWorkspace() {
       </form>
       <section aria-labelledby="jobs-heading"><h2 id="jobs-heading">My Training Jobs</h2>
         <input type="search" className="library-search" aria-label="Search jobs" placeholder="Search job number, model, dataset or status…" value={jobQuery} onChange={e => { setJobQuery(e.target.value); setJobPage(1); }} />
-        <button onClick={reload}>Refresh jobs and weights</button>
+        <div className="training-log-actions"><button onClick={reload}>Refresh jobs and weights</button>
+          <button disabled={clearing} onClick={clearLogs}>{clearing ? "Clearing…" : "Delete log"}</button></div>
+        <small>× and Delete log only hide logs in this browser. Saved jobs and results remain available.</small>
         {jobs.error && <p role="alert">{jobs.error}</p>}
         {jobs.loading ? <p>Loading jobs…</p> : <>
           {!jobs.items.length && <p>No training jobs found.</p>}
-          {jobs.items.map(job => <button key={job.id} className="training-job-row" aria-label={`View Job #${job.id}`} aria-pressed={String(job.id) === selectedJob} onClick={() => selectJob(job.id)}>
+          {jobs.items.map(job => <div key={job.id} className="training-job-card"><button className="training-job-row" aria-label={`View Job #${job.id}`} aria-pressed={String(job.id) === selectedJob} onClick={() => selectJob(job.id)}>
             <strong>Job #{job.id} · {job.model_name} · Version {job.project_version}</strong><span>{job.dataset_name} · {job.status} · Epoch {job.current_epoch || 0}/{job.total_epochs}</span>
-          </button>)}<Pagination page={jobPage} total={jobs.total} onChange={setJobPage} />
+          </button><button className="training-hide-log" aria-label={`Hide Job #${job.id} log`} title="Hide log only; keep saved data" onClick={() => hideJob(job.id)}>×</button></div>)}<Pagination page={jobPage} total={jobs.total} onChange={setJobPage} />
         </>}
       </section>
-      {selectedJob && <JobDetails key={selectedJob} jobId={selectedJob} refresh={refresh} onChanged={reload} />}
+      {selectedJob && <JobDetails key={selectedJob} jobId={selectedJob} refresh={refresh} onChanged={reload} onDeleted={deletedJob} />}
       <section aria-labelledby="weights-heading"><h2 id="weights-heading">Trained Weights</h2>
         <p>Share a completed weight to publish its graphs and training settings. This does not share a private dataset or make the source model editable.</p>
         <input type="search" className="library-search" aria-label="Search weights" placeholder="Search weight, owner or dataset…" value={weightQuery} onChange={e => { setWeightQuery(e.target.value); setWeightPage(1); }} />
-        <ScopeTabs scope={weightScope} mine="My Weights" onChange={value => { setWeightScope(value); setWeightPage(1); }} />
+        <ScopeTabs scope={weightScope} mine="My Jobs" onChange={value => { setWeightScope(value); setWeightPage(1); }} />
         {weights.error && <p role="alert">{weights.error}</p>}
         {weights.loading ? <p>Loading weights…</p> : <>{!weights.items.length && <p>No trained weights found in this section.</p>}
-          {weights.items.map(weight => <WeightRow key={weight.id} weight={weight} onChanged={reload} onView={() => selectJob(weight.training_job_id)} />)}
+          {weights.items.map(weight => <WeightRow key={weight.id} weight={weight} onChanged={reload} onDeleted={deletedJob} onView={() => selectJob(weight.training_job_id)} />)}
           <Pagination page={weightPage} total={weights.total} onChange={setWeightPage} />
         </>}
       </section>
@@ -99,9 +123,17 @@ function ResourcePicker({ resource, onClose, onSelect }) {
   </Modal>;
 }
 
-function JobDetails({ jobId, refresh, onChanged }) {
+function JobDetails({ jobId, refresh, onChanged, onDeleted }) {
   const [data, setData] = useState(null); const [error, setError] = useState(""); const [retry, setRetry] = useState(0);
-  const changed = useRef(onChanged); changed.current = onChanged;
+  const [downloading, setDownloading] = useState(false);
+  async function exportCsv() {
+    if (downloading) return;
+    setDownloading(true);
+    try { await download(`/library/jobs/${jobId}/download/csv`, `job-${jobId}-metrics.csv`); }
+    catch (cause) { setError(cause.message); } finally { setDownloading(false); }
+  }
+  const changed = useRef(onChanged);
+  useEffect(() => { changed.current = onChanged; }, [onChanged]);
   useEffect(() => {
     let disposed = false; let timer; let controller; let inFlight = false; let lastStatus;
     async function load() {
@@ -134,13 +166,27 @@ function JobDetails({ jobId, refresh, onChanged }) {
         <div><dt>Parameters</dt><dd>{job.total_epochs} epochs · Batch {job.batch_size} · LR {job.learning_rate} · {job.optimizer}</dd></div></dl>
       {job.error_message && <p role="alert">{job.error_message}</p>}
       <p>{data.metrics.length} saved epochs · Metrics are stored after each epoch. Live jobs refresh every 3 seconds; return to this page to see the saved history.</p>
+      <div className="training-log-actions"><button disabled={downloading || !data.metrics.length} onClick={exportCsv}>{downloading ? "Exporting…" : "Export CSV"}</button>
+        {job.owner_id === getUser()?.id && !data.weights.length && <DeleteJobButton jobId={job.id} disabled={job.status === "training"} onDeleted={onDeleted} />}</div>
       <div className="training-charts__grid"><MetricChart title="Loss Graph" metrics={data.metrics} kind="loss" emptyMessage="No completed epochs yet." /><MetricChart title="Accuracy Graph" metrics={data.metrics} kind="accuracy" emptyMessage="No completed epochs yet." /></div>
-      {data.weights.map(weight => <WeightRow key={weight.id} weight={weight} onChanged={() => { setRetry(n => n + 1); onChanged(); }} />)}
+      {data.weights.map(weight => <WeightRow key={weight.id} weight={weight} onDeleted={onDeleted} onChanged={() => { setRetry(n => n + 1); onChanged(); }} />)}
     </>}
   </section>;
 }
 
-function WeightRow({ weight, onChanged, onView }) {
+function DeleteJobButton({ jobId, disabled = false, onDeleted, onBusyChange }) {
+  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const pending = useRef(false);
+  async function remove() {
+    if (pending.current || disabled || !confirm(`Permanently delete Job #${jobId}, its epoch metrics and weight records from the database? This cannot be undone. Source models and datasets are kept. Exported files remain on disk.`)) return;
+    pending.current = true; setBusy(true); onBusyChange?.(true); setError("");
+    try { await api(`/library/jobs/${jobId}`, { method: "DELETE" }); onDeleted(jobId); }
+    catch (cause) { setError(cause.message); } finally { pending.current = false; setBusy(false); onBusyChange?.(false); }
+  }
+  return <span className="training-delete-job"><button disabled={disabled || busy} title={disabled ? "Unavailable while training or another action is running" : "Permanently delete this job from the database"} onClick={remove}>{busy ? "Deleting…" : "Delete Job"}</button>{error && <span role="alert">{error}</span>}</span>;
+}
+
+function WeightRow({ weight, onChanged, onView, onDeleted }) {
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   async function action(work, refresh = true) { if (busy) return; setBusy(true); setError(""); try { await work(); if (refresh) onChanged(); } catch (cause) { setError(cause.message); } finally { setBusy(false); } }
   return <article className="library-row"><div className="library-row-info"><h3>{weight.display_name}</h3><p>Model Version {weight.project_version} · {weight.dataset_name} · Weight #{weight.id}</p>{error && <p role="alert">{error}</p>}</div>
@@ -148,7 +194,7 @@ function WeightRow({ weight, onChanged, onView }) {
       <button title="Full PyTorch model + trained weights (model.pt)" disabled={busy || !weight.has_pt || weight.allow_download === false} onClick={() => action(() => download(`/library/weights/${weight.id}/download/pt`, "model.pt"), false)}>Download PT</button>
       <button disabled={busy || !weight.has_onnx || weight.allow_download === false} onClick={() => action(() => download(`/library/weights/${weight.id}/download/onnx`, `weight-${weight.id}-onnx.zip`), false)}>Download ONNX</button>
       {weight.is_owner && <><VisibilityButton item={weight} disabled={busy} onChange={visibility => action(() => api(`/library/weights/${weight.id}/visibility`, { method: "PATCH", body: JSON.stringify({ visibility }) }))} />
-        <button disabled={busy} onClick={() => { if (confirm("Delete this weight from the library? Public access stops. Job history and recoverable files are retained; the model design is not deleted.")) action(() => api(`/library/weights/${weight.id}`, { method: "DELETE" })); }}>Delete Weight</button></>}
+        <DeleteJobButton jobId={weight.training_job_id} disabled={busy} onDeleted={onDeleted} onBusyChange={setBusy} /></>}
     </div>
   </article>;
 }

@@ -8,6 +8,12 @@
 .training-job-row { display: flex; flex-direction: column; gap: 8px; text-align: left; width: 100%; margin: 10px 0; padding: 16px !important; overflow-wrap: anywhere; }
 .training-job-row span { color: #b6bfd4; font-size: 13px; }
 .training-job-row[aria-pressed="true"] { border-color: #a99aff; background: #2c2646; }
+.training-job-card { position: relative; }
+.training-job-card .training-job-row { padding-right: 64px !important; }
+.training-hide-log { position: absolute; right: 10px; top: 10px; min-width: 36px; min-height: 36px; font-size: 20px; }
+.training-log-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.training-delete-job { display: flex; flex-direction: column; gap: 8px; max-width: 100%; }
+.training-delete-job [role="alert"] { color: #ffb2b2; overflow-wrap: anywhere; }
 .training-choices { max-height: 430px; overflow-y: auto; }
 .training-result { padding: 20px; border: 1px solid #353b51; border-radius: 14px; }
 .training-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }

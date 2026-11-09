@@ -1,10 +1,11 @@
 """Synthetic, isolated privacy/community regression tests (no real user data)."""
 import json
+import csv
 from contextlib import contextmanager
 import httpx
 import torch
 from PIL import Image
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZipFile
@@ -268,6 +269,88 @@ class LibraryTests(unittest.TestCase):
             self.assertIsNotNone(weight.deleted_at)
             self.assertIsNone(db.get(Project, 2).deleted_at)
 
+    def test_csv_uses_saved_epochs_in_order_and_enforces_result_permissions(self):
+        job_id = self.submit().json()["job"]["id"]
+        url = f"/library/jobs/{job_id}/download/csv"
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.assertEqual(self.get(url, 2).status_code, 404)
+        self.assertEqual(self.get(url).text, "epoch,train_loss,val_loss,train_accuracy,val_accuracy\r\n")
+        weight_id = self.complete(job_id)
+        with self.sessions() as db:
+            db.add_all([TrainingMetric(training_job_id=job_id, epoch=3, train_loss=0.1, val_loss=None, train_accuracy=93.5, val_accuracy=90),
+                        TrainingMetric(training_job_id=job_id, epoch=2, train_loss=0.7, val_loss=0.8, train_accuracy=80, val_accuracy=75)])
+            db.commit()
+        response = self.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(f'filename="job-{job_id}-metrics.csv"', response.headers["content-disposition"])
+        rows = list(csv.reader(StringIO(response.text)))
+        self.assertEqual(rows[0], ["epoch", "train_loss", "val_loss", "train_accuracy", "val_accuracy"])
+        self.assertEqual([row[0] for row in rows[1:]], ["1", "2", "3"])
+        self.assertEqual(rows[3], ["3", "0.1", "", "93.5", "90.0"])
+        self.client.patch(f"/library/weights/{weight_id}/visibility", json={"visibility": "public"}, headers=self.headers())
+        self.assertEqual(self.get(url, 2).status_code, 200)
+        self.client.patch(f"/library/weights/{weight_id}/visibility", json={"visibility": "private"}, headers=self.headers())
+        self.assertEqual(self.get(url, 2).status_code, 404)
+
+    def test_hidden_filters_paginate_without_mutating_jobs_or_metrics(self):
+        ids = [self.submit().json()["job"]["id"] for _ in range(13)]
+        self.complete(ids[-1])
+        result = self.get(f"/library/jobs?hidden_ids={ids[-1]},{ids[-2]}").json()
+        self.assertEqual(result["total"], 11)
+        self.assertEqual(len(result["items"]), 10)
+        self.assertNotIn(ids[-1], [row["id"] for row in result["items"]])
+        self.assertEqual(self.get(f"/library/jobs?hidden_through={ids[-1]}").json()["total"], 0)
+        new_id = self.submit().json()["job"]["id"]
+        self.assertEqual([row["id"] for row in self.get(f"/library/jobs?hidden_through={ids[-1]}").json()["items"]], [new_id])
+        self.assertEqual(self.get("/library/jobs").json()["total"], 14)
+        self.assertEqual(len(self.get(f"/library/jobs/{ids[-1]}").json()["metrics"]), 1)
+        self.assertEqual(self.get("/library/jobs?hidden_ids=invalid").status_code, 422)
+        self.assertEqual(self.get("/library/jobs?hidden_ids=999999999999999999999999").status_code, 422)
+
+    def test_delete_job_removes_database_records_keeps_sources_and_reserves_export_version(self):
+        from training.worker import get_next_version
+        job_id = self.submit().json()["job"]["id"]
+        weight_id = self.complete(job_id, "public")
+        other_id = self.submit().json()["job"]["id"]
+        with self.sessions() as db:
+            path = Path(db.get(ModelVersion, weight_id).pt_path)
+            # Include previously soft-deleted exports in cleanup and reservation.
+            from datetime import datetime
+            db.add(ModelVersion(owner_id=1, project_id=2, dataset_id=2, training_job_id=job_id,
+                                name="Removed", version=7, deleted_at=datetime.utcnow()))
+            db.commit()
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}").status_code, 401)
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}", headers=self.headers(2)).status_code, 404)
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}", headers=self.headers()).status_code, 200)
+        with self.sessions() as db:
+            self.assertIsNone(db.get(TrainingJob, job_id))
+            self.assertEqual(db.query(TrainingMetric).filter_by(training_job_id=job_id).count(), 0)
+            self.assertEqual(db.query(ModelVersion).filter_by(training_job_id=job_id).count(), 0)
+            self.assertIsNotNone(db.get(TrainingJob, other_id))
+            self.assertIsNotNone(db.get(Project, 2)); self.assertIsNotNone(db.get(Dataset, 2))
+            self.assertEqual(get_next_version(db, 2), 8)
+        self.assertTrue(path.is_file())
+        self.assertEqual(self.get(f"/library/jobs/{job_id}").status_code, 404)
+        self.assertEqual(self.get(f"/library/jobs/{job_id}/download/csv").status_code, 404)
+        self.assertEqual(self.get(f"/library/weights/{weight_id}/download/pt", 2).status_code, 404)
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}", headers=self.headers()).status_code, 404)
+
+    def test_delete_job_rejects_training_and_dependencies_but_allows_queued_and_failed(self):
+        job_id = self.submit().json()["job"]["id"]
+        with self.sessions() as db:
+            db.get(TrainingJob, job_id).status = "training"; db.commit()
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}", headers=self.headers()).status_code, 409)
+        weight_id = self.complete(job_id)
+        dependent_id = self.submit().json()["job"]["id"]
+        with self.sessions() as db:
+            db.get(TrainingJob, dependent_id).source_model_version_id = weight_id; db.commit()
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}", headers=self.headers()).status_code, 409)
+        self.assertEqual(self.client.delete(f"/library/jobs/{dependent_id}", headers=self.headers()).status_code, 200)
+        self.assertEqual(self.client.delete(f"/library/jobs/{job_id}", headers=self.headers()).status_code, 200)
+        failed_id = self.submit().json()["job"]["id"]
+        with self.sessions() as db:
+            db.get(TrainingJob, failed_id).status = "failed"; db.commit()
+        self.assertEqual(self.client.delete(f"/library/jobs/{failed_id}", headers=self.headers()).status_code, 200)
     def test_weight_download_rejects_path_escape_and_unsupported_json(self):
         job_id = self.submit().json()["job"]["id"]
         weight_id = self.complete(job_id, "public")

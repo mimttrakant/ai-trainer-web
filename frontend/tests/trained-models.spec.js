@@ -16,12 +16,15 @@ test("downloads PT and ONNX with server filenames and no JSON action", async ({ 
   await expect(page.getByRole("button", { name: "Delete Model", exact: true })).toHaveCount(0);
 });
 
-test("delete confirms, supports cancel, removes only weight and preserves graphs after reload", async ({ page }) => {
+test("delete confirms, supports cancel, removes the job and clears its selected results", async ({ page }) => {
   const state = await setupTraining(page, { weights: [{ ...weight }] }); await page.goto("/training?job=4");
-  page.once("dialog", dialog => dialog.dismiss()); await weights(page).getByRole("button", { name: "Delete Weight", exact: true }).click(); expect(state.deletes).toBe(0);
-  page.once("dialog", dialog => dialog.accept()); await weights(page).getByRole("button", { name: "Delete Weight", exact: true }).click();
+  await expect(weights(page).getByRole("button", { name: "My Jobs", exact: true })).toBeVisible();
+  page.once("dialog", dialog => dialog.dismiss()); await weights(page).getByRole("button", { name: "Delete Job", exact: true }).click(); expect(state.deletes).toBe(0);
+  page.once("dialog", dialog => dialog.accept()); await weights(page).getByRole("button", { name: "Delete Job", exact: true }).click();
   await expect(weights(page).getByText("No trained weights found in this section.")).toBeVisible();
-  await page.reload(); await expect(page.getByRole("article", { name: "Loss Graph" }).locator(".recharts-line-dot")).toHaveCount(4); expect(state.deletes).toBe(1);
+  await expect(page).not.toHaveURL(/job=4/);
+  await page.reload(); await expect(page.getByRole("article", { name: "Loss Graph" })).toHaveCount(0); expect(state.deletes).toBe(1);
+  expect(state.jobs).toHaveLength(0); expect(state.metrics[4]).toBeUndefined();
 });
 
 test("sharing exposes graphs and downloads, community users cannot delete others' weights", async ({ page }) => {
@@ -30,17 +33,17 @@ test("sharing exposes graphs and downloads, community users cannot delete others
   await expect(weights(page).getByRole("switch")).toHaveAttribute("aria-checked", "true"); expect(state.weights[0].visibility).toBe("public");
   await weights(page).getByRole("button", { name: "Public (Community)", exact: true }).click();
   const row = weights(page).getByRole("article").filter({ has: page.getByRole("heading", { name: "bob/Shared", exact: true }) });
-  await expect(row.getByRole("button", { name: "Delete Weight", exact: true })).toHaveCount(0); await expect(row.getByRole("switch")).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Delete Job", exact: true })).toHaveCount(0); await expect(row.getByRole("switch")).toHaveCount(0);
   await row.getByRole("button", { name: "View results", exact: true }).click(); await expect(page.getByRole("article", { name: "Loss Graph" }).locator(".recharts-line-dot")).toHaveCount(4);
 });
 
 test("failed operations keep weight and disable concurrent actions during download", async ({ page }) => {
   const state = await setupTraining(page, { weights: [{ ...weight }], failDownload: true, downloadDelay: 700 }); await page.goto("/training");
   await weights(page).getByRole("button", { name: "Download PT", exact: true }).click();
-  await expect(weights(page).getByRole("button", { name: "Delete Weight", exact: true })).toBeDisabled();
+  await expect(weights(page).getByRole("button", { name: "Delete Job", exact: true })).toBeDisabled();
   await expect(weights(page).getByText("Weight file is missing.")).toBeVisible();
-  state.failDelete = true; page.once("dialog", dialog => dialog.accept()); await weights(page).getByRole("button", { name: "Delete Weight", exact: true }).click();
-  await expect(weights(page).getByText("Unable to delete weight. Retry.")).toBeVisible(); await expect(weights(page).getByRole("heading", { name: "alice/Classifier", exact: true })).toBeVisible();
+  state.failDelete = true; page.once("dialog", dialog => dialog.accept()); await weights(page).getByRole("button", { name: "Delete Job", exact: true }).click();
+  await expect(weights(page).getByText("Unable to delete job. Retry.")).toBeVisible(); await expect(weights(page).getByRole("heading", { name: "alice/Classifier", exact: true })).toBeVisible();
 });
 
 test("missing formats are disabled and actions fit mobile width", async ({ page }, testInfo) => {

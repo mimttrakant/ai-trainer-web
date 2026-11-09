@@ -48,10 +48,8 @@ def get_next_version(
         .first()
     )
 
-    if latest is None:
-        return 1
-
-    return latest.version + 1
+    reserved = db.query(Project.weight_version).filter(Project.id == project_id).scalar() or 0
+    return max(reserved, latest.version if latest else 0) + 1
 
 
 def resolve_dataset_path(
@@ -545,6 +543,9 @@ def publish_model_version(db, job, project, dataset, built, data, result):
             raise ValueError(f"Project {project.id} was deleted during training.")
 
         version = get_next_version(db, project.id)
+        db.query(Project).filter(Project.id == project.id).update(
+            {Project.weight_version: version}, synchronize_session=False,
+        )
         print(f"[Worker] Job {job.id}: exporting model version {version}")
         paths = export_trained_model(
             project_version=job.project_version,

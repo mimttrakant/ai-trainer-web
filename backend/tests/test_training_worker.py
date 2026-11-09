@@ -276,6 +276,37 @@ class WorkerPostgresTests(unittest.TestCase):
         # lock to verify PostgreSQL alone prevents duplicate version allocation.
         with patch.object(worker, "EXPORT_LOCK", nullcontext()), patch.object(worker, "export_trained_model", fake_export), ThreadPoolExecutor(2) as pool:
             self.assertEqual(sorted(pool.map(publish, [1, 2])), [1, 2])
+        with self.sessions() as db:
+            db.query(ModelVersion).delete(); db.commit()
+            self.assertEqual(worker.get_next_version(db, 1), 3)
+
+    def test_job_deletion_excludes_concurrent_worker_claims(self):
+        from library_training import delete_job
+        self.add_jobs(1)
+        deleting = Event(); release = Event()
+
+        def remove():
+            with self.sessions() as db:
+                commit = db.commit
+                def hold_commit():
+                    db.flush()
+                    deleting.set()
+                    if not release.wait(timeout=10):
+                        raise TimeoutError("Deletion was not released.")
+                    commit()
+                with patch.object(db, "commit", hold_commit):
+                    return delete_job(1, SimpleNamespace(id=1), db)
+
+        with ThreadPoolExecutor(1) as pool:
+            future = pool.submit(remove)
+            try:
+                self.assertTrue(deleting.wait(timeout=5))
+                self.assertIsNone(worker.claim_queued_job(1))
+            finally:
+                release.set()
+            self.assertTrue(future.result(timeout=5)["success"])
+        with self.sessions() as db:
+            self.assertIsNone(db.get(TrainingJob, 1))
 
     def test_queued_job_trains_submission_snapshot_after_builder_changes(self):
         self.add_jobs(1)
