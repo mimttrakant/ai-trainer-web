@@ -15,6 +15,7 @@ from library_models import router as library_model_router
 from library_training import router as library_training_router
 from datetime import datetime
 from database import engine, get_db
+from database_sequences import repair_id_sequences
 from dataset_details import router as dataset_details_router
 from model_routes import router as model_router
 from project_versioning import migrate_project_versions, save_project_version, snapshot_project, router as project_version_router
@@ -47,6 +48,7 @@ from schemas import (
 
 
 Base.metadata.create_all(bind=engine)
+repair_id_sequences(engine)
 migrate_project_versions(engine)
 migrate_library(engine)
 

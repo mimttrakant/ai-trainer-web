@@ -63,6 +63,20 @@ docker compose up -d frontend
 
 ## Verify
 
+After restoring data, automatic PostgreSQL ID counters must stay ahead of the
+imported rows. The API checks and advances stale counters at startup, before its
+version migrations. It never lowers counters or changes existing records.
+If data was imported while the API was already running, repair the counters with:
+
+```powershell
+docker compose exec -T backend python -m database_sequences
+```
+
+This covers users, datasets, designs, design revisions, training jobs, metrics and
+trained models. It fixes duplicate primary-key errors caused by stale counters;
+it does not replace a complete database backup/restore. Run it when training is
+idle: it briefly locks writes and stops after a five-second lock timeout if busy.
+
 ```powershell
 docker compose exec -T frontend npm run build
 docker compose exec -T -e WORKER_TEST_POSTGRES=1 backend python -m unittest discover -s tests -p test_training_worker.py -v
